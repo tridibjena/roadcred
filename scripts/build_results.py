@@ -320,6 +320,67 @@ def section_compression() -> str:
     return "\n".join(out)
 
 
+def section_distillation() -> str:
+    rows = read_csv("distillation")
+    if not rows:
+        return ""
+    distilled = next((r for r in rows if r.get("variant") == "student_distilled"), None)
+    out = [
+        "## 8b. Knowledge distillation",
+        "",
+        "The comparison that matters is not whether a distilled student beats its teacher —",
+        "it will not — but whether it beats **the same student trained alone**, at identical",
+        "capacity, data, schedule and seed. Only that isolates the value of the teacher's soft",
+        "targets from the value of simply having a smaller model.",
+        "",
+        table(rows, [("variant", "variant"), ("encoder", "encoder"), ("miou", "mIoU"),
+                     ("params", "params"), ("gain_over_alone", "vs student alone"),
+                     ("gap_to_teacher", "vs teacher")]),
+        "",
+    ]
+    if distilled and distilled.get("gain_over_alone") is not None:
+        gain = distilled["gain_over_alone"]
+        verdict = ("Distillation helped" if gain > 0 else
+                   "Distillation did **not** help at this scale")
+        out += [
+            f"**{verdict}: {gain:+.4f} mIoU against the identical student trained alone.**",
+            "",
+        ]
+        if gain <= 0:
+            out += [
+                "That is a legitimate outcome and is reported as measured. With 1403 training",
+                "frames the student is not capacity-limited enough for the teacher's soft",
+                "targets to add information beyond the hard labels.",
+                "",
+            ]
+    return "\n".join(out)
+
+
+def section_pareto() -> str:
+    rows = read_csv("compression_pareto")
+    if not rows:
+        return ""
+    from compression.pareto import pareto_frontier
+
+    frontier = {(r["variant"], r["precision"]) for r in pareto_frontier(rows)}
+    for row in rows:
+        row["_pareto"] = "yes" if (row["variant"], row["precision"]) in frontier else ""
+    return "\n".join([
+        "## 8c. Deployment Pareto",
+        "",
+        "Every variant at both precisions, benchmarked identically. A configuration is",
+        "*dominated* when another is at least as fast and at least as accurate; only the",
+        "survivors represent a real deployment choice.",
+        "",
+        table(rows, [("variant", "variant"), ("precision", "precision"), ("miou", "mIoU"),
+                     ("latency_ms_mean", "latency ms"), ("latency_ms_p95", "p95 ms"),
+                     ("size_mb", "size MB"), ("_pareto", "Pareto-optimal")], 2),
+        "",
+        "![compression Pareto](figures/compression_pareto.png)",
+        "",
+    ])
+
+
 def section_errors() -> str:
     report = read_json("error_analysis")
     if not report:
@@ -382,7 +443,8 @@ def main() -> None:
     sections = [
         section_split(), section_loss(), section_arch(), section_pretrain(),
         section_calibration(), section_robustness(), section_stability(),
-        section_compression(), section_errors(),
+        section_compression(), section_distillation(), section_pareto(),
+        section_errors(),
     ]
     body = [s for s in sections if s]
     if not body:

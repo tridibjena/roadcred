@@ -79,3 +79,32 @@ def test_all_pixels_ignored_does_not_produce_nan():
     target = torch.full((1, 4, 4), IGNORE, dtype=torch.long)
     loss = DistillationLoss(alpha=1.0)(student, teacher, target)
     assert torch.isfinite(loss)
+
+
+def test_pareto_frontier_excludes_dominated_configurations():
+    """A configuration is dominated when another is at least as fast and as accurate;
+    only the survivors represent a real deployment choice."""
+    from compression.pareto import pareto_frontier
+
+    rows = [
+        {"variant": "teacher", "precision": "fp32", "latency_ms_mean": 100, "miou": 0.70},
+        {"variant": "teacher", "precision": "int8", "latency_ms_mean": 60, "miou": 0.69},
+        {"variant": "student", "precision": "fp32", "latency_ms_mean": 40, "miou": 0.65},
+        {"variant": "student", "precision": "int8", "latency_ms_mean": 25, "miou": 0.64},
+        {"variant": "dominated", "precision": "fp32", "latency_ms_mean": 80, "miou": 0.60},
+    ]
+    frontier = pareto_frontier(rows)
+    assert all(r["variant"] != "dominated" for r in frontier)
+    assert len(frontier) == 4
+    # Sorted by latency, and accuracy must increase along it.
+    latencies = [r["latency_ms_mean"] for r in frontier]
+    mious = [r["miou"] for r in frontier]
+    assert latencies == sorted(latencies)
+    assert mious == sorted(mious)
+
+
+def test_pareto_frontier_keeps_a_single_point():
+    from compression.pareto import pareto_frontier
+
+    rows = [{"variant": "only", "precision": "fp32", "latency_ms_mean": 10, "miou": 0.5}]
+    assert pareto_frontier(rows) == rows
