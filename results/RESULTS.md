@@ -15,7 +15,7 @@ This is a small dataset and the absolute mIoU values reflect that. The compariso
 controlled — one factor varies at a time, with everything else held fixed — so the
 *differences* between rows are meaningful even where the absolute numbers are modest.
 
-Runs recorded: 1. Code version: `cebd279`.
+Runs recorded: 1. Code version: `8299b94`.
 
 ---
 ## 1. Does a random split overstate generalization?
@@ -32,7 +32,7 @@ augmentation and seed are identical.
 
 | split | mIoU | mean acc | pixel acc | best epoch |
 |---|---|---|---|---|
-| IDD's own split (drive-disjoint) | 0.6913 | 0.7889 | 0.8867 | 27.0000 |
+| IDD's own split (drive-disjoint) | 0.6913 | 0.7889 | 0.8867 | 27 |
 
 ---
 
@@ -58,7 +58,7 @@ distribution moves.
 
 ## 6. Robustness under adverse conditions
 
-Ten corruptions at severities 1/3/5, standing in for adverse driving conditions.
+5 corruptions (`fog`, `gaussian_noise`, `low_light`, `motion_blur`, `rain`) at severities 1/3, standing in for adverse driving conditions.
 None of them appear in the training augmentation pipeline, so the drop measures
 genuine distribution shift rather than a train/test augmentation mismatch.
 
@@ -69,16 +69,16 @@ drift rather than a genuine failure to perceive.
 
 | corruption | sev | mIoU | + BN adapt | recovered | retention |
 |---|---|---|---|---|---|
-| fog | 1.0000 | 0.6854 | 0.6821 | -0.0033 | 0.9989 |
-| fog | 3.0000 | 0.6744 | 0.6818 | 0.0073 | 0.9829 |
-| rain | 1.0000 | 0.6007 | 0.6368 | 0.0362 | 0.8754 |
-| rain | 3.0000 | 0.4652 | 0.5615 | 0.0964 | 0.6780 |
-| low_light | 1.0000 | 0.6802 | 0.6756 | -0.0046 | 0.9913 |
-| low_light | 3.0000 | 0.5609 | 0.6444 | 0.0836 | 0.8174 |
-| motion_blur | 1.0000 | 0.6766 | 0.6777 | 0.0010 | 0.9861 |
-| motion_blur | 3.0000 | 0.5896 | 0.6322 | 0.0426 | 0.8592 |
-| gaussian_noise | 1.0000 | 0.6388 | 0.6615 | 0.0226 | 0.9310 |
-| gaussian_noise | 3.0000 | 0.3410 | 0.6196 | 0.2786 | 0.4969 |
+| fog | 1 | 0.6854 | 0.6821 | -0.0033 | 0.9989 |
+| fog | 3 | 0.6744 | 0.6818 | 0.0073 | 0.9829 |
+| rain | 1 | 0.6007 | 0.6368 | 0.0362 | 0.8754 |
+| rain | 3 | 0.4652 | 0.5615 | 0.0964 | 0.6780 |
+| low_light | 1 | 0.6802 | 0.6756 | -0.0046 | 0.9913 |
+| low_light | 3 | 0.5609 | 0.6444 | 0.0836 | 0.8174 |
+| motion_blur | 1 | 0.6766 | 0.6777 | 0.0010 | 0.9861 |
+| motion_blur | 3 | 0.5896 | 0.6322 | 0.0426 | 0.8592 |
+| gaussian_noise | 1 | 0.6388 | 0.6615 | 0.0226 | 0.9310 |
+| gaussian_noise | 3 | 0.3410 | 0.6196 | 0.2786 | 0.4969 |
 
 Clean baseline: **0.6862 mIoU**. Worst case: `gaussian_noise` at severity 3 → 0.3410.
  BatchNorm adaptation recovers **+0.0560 mIoU on average**, without labels or gradient updates.
@@ -104,7 +104,7 @@ comparison, so only genuine class flips are counted. No ground truth is required
 | shift_1px | 0.0206 | 0.0002 | 0.0157 |
 | shift_2px | 0.0322 | 0.0009 | 0.0241 |
 | brightness_5pct | 0.0042 | 0.0000 | 0.0036 |
-| brightness_-5pct | 0.0039 | 0.0000 | 0.0033 |
+| brightness_-5pct | 0.0039 | 0 | 0.0033 |
 | noise_sigma0.01 | 0.0132 | 0.0004 | 0.0105 |
 | jpeg_q90 | 0.0077 | 0.0000 | 0.0061 |
 

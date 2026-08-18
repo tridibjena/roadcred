@@ -52,9 +52,14 @@ def read_json(name: str) -> dict[str, Any] | None:
 
 
 def fmt(value: Any, digits: int = 4) -> str:
+    """Format a cell. Reading a CSV coerces every numeric column to float, so integral
+    values like an epoch number or a severity level must be rendered without a decimal
+    tail or the table reads as spurious precision."""
     if value is None:
         return "—"
     if isinstance(value, float):
+        if value.is_integer():
+            return f"{int(value):,}"
         return f"{value:.{digits}f}" if abs(value) < 1000 else f"{value:,.0f}"
     return str(value)
 
@@ -231,10 +236,15 @@ def section_robustness() -> str:
     worst = min(corrupted, key=lambda r: r.get("miou") or 1)
     recovered = [r["recovered"] for r in corrupted if r.get("recovered") is not None]
 
+    names = sorted({str(r["corruption"]) for r in corrupted})
+    severities = sorted({int(r["severity"]) for r in corrupted if r.get("severity") is not None})
     out = [
         "## 6. Robustness under adverse conditions",
         "",
-        "Ten corruptions at severities 1/3/5, standing in for adverse driving conditions.",
+        f"{len(names)} corruptions "
+        f"({', '.join('`' + n + '`' for n in names)}) at "
+        f"{'severity' if len(severities) == 1 else 'severities'} "
+        f"{'/'.join(str(s) for s in severities)}, standing in for adverse driving conditions.",
         "None of them appear in the training augmentation pipeline, so the drop measures",
         "genuine distribution shift rather than a train/test augmentation mismatch.",
         "",
