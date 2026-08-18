@@ -204,7 +204,13 @@ def plot_iou_vs_frequency(report: dict[str, Any], out_path: str | Path) -> Path:
         correlation = np.corrcoef(np.log10(frequency[valid]), iou[valid])[0, 1]
         ax.set_title(f"Per-class IoU vs frequency   (Pearson r = {correlation:.2f} on log freq)")
     ax.set_xscale("log")
-    ax.set_xlabel("share of labelled validation pixels (%)")
+    # Matplotlib's default log formatter renders "2 x 10^0" for percentages, which is
+    # unreadable here; the range is narrow enough for plain decimal labels.
+    ticks = [1, 2, 5, 10, 20, 40]
+    ax.set_xticks(ticks)
+    ax.set_xticklabels([f"{t}%" for t in ticks])
+    ax.minorticks_off()
+    ax.set_xlabel("share of labelled validation pixels")
     ax.set_ylabel("IoU")
     ax.grid(alpha=0.3, zorder=0)
 

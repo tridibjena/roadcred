@@ -223,6 +223,9 @@ def plot_degradation(csv_path: str | Path, out_path: str | Path) -> Path:
                     color="#4C72B0", ms=4, label="+ BN adapt")
         ax.set_title(name, fontsize=10)
         ax.set_ylim(0, max(0.05, clean * 1.15))
+        # Severity is an integer level; matplotlib's default locator would otherwise
+        # draw meaningless half-severities like 1.5.
+        ax.set_xticks(sorted(subset["severity"].unique()))
         ax.grid(alpha=0.25)
     for ax in axes[len(names):]:
         ax.axis("off")

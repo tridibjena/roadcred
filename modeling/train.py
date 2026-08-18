@@ -145,7 +145,7 @@ def train_one_epoch(
         count += 1
         global_step += 1
         if log is not None and global_step % 20 == 0:
-            log.scalar("train/loss_step", float(loss), global_step)
+            log.scalar("train/loss_step", loss.detach().item(), global_step)
             log.scalar("train/lr", scheduler.get_last_lr()[0], global_step)
 
     return (running / max(1, count)), global_step
