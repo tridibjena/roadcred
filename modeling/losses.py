@@ -88,6 +88,13 @@ class CrossEntropy(nn.Module):
         self.label_smoothing = label_smoothing
 
     def forward(self, logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        if not _valid_mask(target).any():
+            # Every pixel ignored. F.cross_entropy's mean reduction divides by zero here
+            # and returns NaN, which then propagates through the optimiser and destroys
+            # the weights permanently -- and `0 * NaN` is still NaN, so a blend weight of
+            # zero does not save a combined loss either. Return a zero that keeps the
+            # autograd graph connected.
+            return logits.sum() * 0.0
         return F.cross_entropy(
             logits,
             target.long(),

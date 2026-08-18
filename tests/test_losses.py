@@ -111,6 +111,25 @@ def test_weighted_ce_requires_weights(banded):
         make_loss("weighted_ce")
 
 
+@pytest.mark.parametrize("name", ["ce", "weighted_ce", "dice", "tversky", "boundary"])
+def test_all_ignored_batch_does_not_produce_nan(name):
+    """Regression: F.cross_entropy's mean reduction returns NaN when every pixel is
+    ignored, and `0 * NaN` is still NaN, so even a zero blend weight does not rescue a
+    combined loss. A single NaN batch propagates through AdamW and destroys the weights
+    permanently, so this must be a hard zero rather than merely 'rare in practice'."""
+    torch.manual_seed(0)
+    logits = torch.randn(1, 3, 4, 4, requires_grad=True)
+    target = torch.full((1, 4, 4), 255, dtype=torch.long)
+    weights = compute_class_weights(np.array([50, 30, 20]))
+
+    loss = make_loss(name, class_weights=weights)(logits, target)
+    assert torch.isfinite(loss), f"{name} produced {loss} on an all-ignored batch"
+    assert float(loss) == pytest.approx(0.0, abs=1e-6)
+
+    loss.backward()
+    assert torch.isfinite(logits.grad).all(), f"{name} produced non-finite gradients"
+
+
 def test_unknown_loss_raises():
     with pytest.raises(ValueError, match="Unknown loss"):
         make_loss("nonexistent")
