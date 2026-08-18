@@ -99,7 +99,7 @@ def evaluate_checkpoint(
     """Evaluate a checkpoint on a prepared variant and return all metrics."""
     from torch.utils.data import DataLoader
 
-    from modeling.train import resolve_device
+    from modeling.config import resolve_device
 
     device_t = resolve_device(device)
     model, payload = load_checkpoint(checkpoint, device_t)

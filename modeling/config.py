@@ -17,7 +17,18 @@ import os
 import random
 from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
-from typing import Any, Mapping, TypeVar, get_args, get_origin
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Mapping,
+    TypeVar,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
+
+if TYPE_CHECKING:
+    import torch
 
 import yaml
 
@@ -72,33 +83,46 @@ class DataConfig:
 
 @dataclass
 class TrainConfig:
-    """Hyperparameters for a single training run."""
+    """Hyperparameters for a single training run.
 
-    #: Ultralytics checkpoint name, or ``deeplabv3plus`` for the smp baseline.
-    model: str = "yolo26n-sem.pt"
-    task: str = "semantic"
-    epochs: int = 40
-    batch: int = 16
-    imgsz: int = 320
-    lr0: float = 0.01
-    weight_decay: float = 0.0005
-    optimizer: str = "auto"
-    patience: int = 15
+    Field names match the keyword arguments of :func:`modeling.train.train`, so a config
+    can be splatted straight into it without a translation layer that could silently drop
+    a setting.
+    """
+
+    #: Decoder architecture; see :data:`modeling.architectures.SMP_ARCHITECTURES`.
+    architecture: str = "deeplabv3plus"
+    #: Encoder/backbone name, e.g. ``resnet34`` / ``resnet18`` / ``mobilenet_v2``.
+    encoder: str = "resnet34"
+    #: ``imagenet`` for pretrained encoder weights, or ``null`` for random init.
+    encoder_weights: str | None = "imagenet"
 
     #: One of ``ce`` / ``weighted_ce`` / ``dice`` / ``tversky`` / ``boundary``.
-    #: See :mod:`modeling.losses` for definitions.
     loss: str = "ce"
     #: Blend weight when a region loss is combined with cross-entropy.
     loss_alpha: float = 0.5
-    #: Tversky false-negative penalty; 0.5 recovers Dice.
+    #: Tversky false-negative weight; 0.5 recovers Dice.
     tversky_beta: float = 0.7
+
+    epochs: int = 40
+    batch_size: int = 8
+    #: ``(height, width)``; both must be multiples of 32.
+    imgsz: tuple[int, int] = (224, 320)
+    lr: float = 3e-4
+    weight_decay: float = 1e-4
+    #: Stop after this many epochs without a new best validation mIoU.
+    patience: int = 12
+    #: Fraction of total steps spent in linear warmup before cosine decay.
+    warmup_frac: float = 0.05
+    #: Max gradient norm; 0 disables clipping.
+    grad_clip: float = 1.0
 
     seed: int = 0
     #: ``auto`` resolves to mps > cuda > cpu.
     device: str = "auto"
-    workers: int = 4
-    #: Encoder weights for the smp baseline: ``imagenet``, ``none``, or an SSL checkpoint path.
-    encoder_weights: str = "imagenet"
+    #: Dataloader workers. 0 by default -- single-process augmented loading measures
+    #: ~640 img/s against ~37 img/s of MPS training throughput.
+    workers: int = 0
 
 
 @dataclass
@@ -125,6 +149,12 @@ def _coerce(value: Any, target: Any) -> Any:
         return [_coerce(v, arg) for v in value]
     if is_dataclass(target) and isinstance(value, Mapping):
         return _build(target, value)
+    if origin is not None and value is not None:
+        # Unwrap unions such as `str | None`: coerce to the first non-None member.
+        args = [a for a in get_args(target) if a is not type(None)]
+        if len(args) == 1:
+            return _coerce(value, args[0])
+        return value
     if target in (int, float, str, bool) and value is not None:
         return target(value)
     return value
@@ -133,9 +163,15 @@ def _coerce(value: Any, target: Any) -> Any:
 def _build(dc_type: type[T], mapping: Mapping[str, Any]) -> T:
     """Instantiate a (possibly nested) dataclass from a plain mapping.
 
-    Unknown keys raise rather than being silently dropped -- a typo in a config that
-    quietly reverts a hyperparameter to its default is the kind of bug that invalidates
-    an entire ablation table without ever failing loudly.
+    Field types are resolved with :func:`typing.get_type_hints` rather than read off
+    ``Field.type``. Because this module uses ``from __future__ import annotations``,
+    ``Field.type`` is the *string* ``"TrainConfig"``, not the class -- so a naive
+    implementation never recognises a nested dataclass and silently hands back a plain
+    dict, which then fails far away from the cause.
+
+    Unknown keys raise rather than being silently dropped: a typo in a config that quietly
+    reverts a hyperparameter to its default is the kind of bug that invalidates an entire
+    ablation table without ever failing loudly.
     """
     known = {f.name: f for f in fields(dc_type)}
     unknown = set(mapping) - set(known)
@@ -144,7 +180,8 @@ def _build(dc_type: type[T], mapping: Mapping[str, Any]) -> T:
             f"Unknown key(s) {sorted(unknown)} for {dc_type.__name__}. "
             f"Valid keys: {sorted(known)}"
         )
-    kwargs = {k: _coerce(v, known[k].type) for k, v in mapping.items()}
+    hints = get_type_hints(dc_type)
+    kwargs = {k: _coerce(v, hints.get(k, known[k].type)) for k, v in mapping.items()}
     return dc_type(**kwargs)
 
 
@@ -198,24 +235,31 @@ def to_dict(cfg: Config) -> dict[str, Any]:
     return flat
 
 
-def resolve_device(requested: str = "auto") -> str:
+def resolve_device(requested: str = "auto") -> "torch.device":
     """Resolve ``auto`` to the best available torch device.
 
     Ordered mps > cuda > cpu, since this project's reference machine is Apple silicon.
+    Defined here rather than in :mod:`modeling.train` so that evaluation and serving code
+    can resolve a device without importing the whole training stack.
     """
-    if requested != "auto":
-        return requested
     import torch
 
+    if requested != "auto":
+        return torch.device(requested)
     if torch.backends.mps.is_available():
-        return "mps"
+        return torch.device("mps")
     if torch.cuda.is_available():
-        return "cuda"
-    return "cpu"
+        return torch.device("cuda")
+    return torch.device("cpu")
 
 
-def set_seed(seed: int) -> None:
-    """Seed python, numpy and torch so multi-seed spread reflects init, not luck."""
+def set_seed(seed: int, deterministic: bool = True) -> None:
+    """Seed every RNG that affects a run.
+
+    ``deterministic`` also fixes cuDNN's algorithm choice, because the multi-seed spread
+    reported in RESULTS.md is meant to measure initialisation and data-ordering variance,
+    not kernel nondeterminism.
+    """
     import numpy as np
     import torch
 
@@ -224,6 +268,9 @@ def set_seed(seed: int) -> None:
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
+    if deterministic:
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
 
 __all__ = [

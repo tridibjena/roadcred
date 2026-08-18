@@ -1,0 +1,23 @@
+# Example experiment config. Every field maps to a keyword of modeling.train.train,
+# so nothing is lost in translation. Run with:
+#   python -m modeling.train --config configs/experiment_example.yaml
+name: dice_boundary_sweep
+note: "Dice + CE blend, three-seed arm"
+
+data:
+  idd_root: data/raw/idd_seg
+  target: level1
+
+train:
+  architecture: deeplabv3plus
+  encoder: resnet34
+  encoder_weights: imagenet
+  loss: dice
+  loss_alpha: 0.5
+  epochs: 30
+  batch_size: 8
+  imgsz: [224, 320]
+  lr: 0.0003
+  weight_decay: 0.0001
+  patience: 8
+  seed: 0

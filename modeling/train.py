@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -25,38 +26,10 @@ from torch.utils.data import DataLoader
 
 from evaluation.metrics import ConfusionMatrix
 from modeling.architectures import build_model, count_parameters
+from modeling.config import resolve_device, set_seed
 from modeling.dataset import build_loaders, training_class_counts
 from modeling.losses import compute_class_weights, make_loss
 from modeling.tracking import TensorBoard, log_run
-
-
-def resolve_device(requested: str = "auto") -> torch.device:
-    """Resolve ``auto`` to mps > cuda > cpu."""
-    if requested != "auto":
-        return torch.device(requested)
-    if torch.backends.mps.is_available():
-        return torch.device("mps")
-    if torch.cuda.is_available():
-        return torch.device("cuda")
-    return torch.device("cpu")
-
-
-def set_seed(seed: int, deterministic: bool = True) -> None:
-    """Seed every RNG that affects a run.
-
-    ``deterministic`` also fixes cuDNN's algorithm choice. It is left on because the
-    multi-seed spread reported in RESULTS.md is meant to measure initialisation and data
-    ordering variance, not kernel nondeterminism.
-    """
-    import random
-
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    if deterministic:
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
 
 
 def cosine_schedule(
@@ -341,6 +314,11 @@ def _default_class_names(data_root: Path) -> list[str]:
 def main() -> None:
     """CLI entry point."""
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--config",
+        default=None,
+        help="YAML config supplying defaults; any flag given explicitly overrides it",
+    )
     parser.add_argument("--data", default="data/processed/level1_official")
     parser.add_argument("--arch", default="deeplabv3plus")
     parser.add_argument("--encoder", default="resnet34")
@@ -359,26 +337,50 @@ def main() -> None:
     parser.add_argument("--no-tensorboard", action="store_true")
     args = parser.parse_args()
 
-    height, width = (int(v) for v in args.imgsz.lower().split("x"))
-    weights = None if args.encoder_weights.lower() in {"none", "null", ""} else args.encoder_weights
+    # Config supplies defaults; anything the user typed on the command line wins. Only
+    # flags actually present in argv override, so a config value is never silently
+    # replaced by an argparse default the user never asked for.
+    from dataclasses import asdict
+
+    from modeling.config import load_config
+
+    settings = asdict(load_config(args.config).train) if args.config else {}
+    supplied = {a.lstrip("-").replace("-", "_") for a in sys.argv[1:] if a.startswith("--")}
+    cli = {
+        "architecture": args.arch,
+        "encoder": args.encoder,
+        "encoder_weights": args.encoder_weights,
+        "loss": args.loss,
+        "epochs": args.epochs,
+        "batch_size": args.batch_size,
+        "imgsz": args.imgsz,
+        "lr": args.lr,
+        "weight_decay": args.weight_decay,
+        "seed": args.seed,
+        "device": args.device,
+        "workers": args.workers,
+        "patience": args.patience,
+    }
+    alias = {"architecture": "arch", "batch_size": "batch_size"}
+    for key, value in cli.items():
+        if not settings or alias.get(key, key) in supplied:
+            settings[key] = value
+
+    imgsz = settings.get("imgsz", (224, 320))
+    if isinstance(imgsz, str):
+        imgsz = tuple(int(v) for v in imgsz.lower().split("x"))
+    settings["imgsz"] = tuple(imgsz)
+
+    weights = settings.get("encoder_weights")
+    if isinstance(weights, str) and weights.lower() in {"none", "null", ""}:
+        weights = None
+    settings["encoder_weights"] = weights
 
     result = train(
         args.data,
-        architecture=args.arch,
-        encoder=args.encoder,
-        encoder_weights=weights,
-        loss=args.loss,
-        epochs=args.epochs,
-        batch_size=args.batch_size,
-        imgsz=(height, width),
-        lr=args.lr,
-        weight_decay=args.weight_decay,
-        seed=args.seed,
-        device=args.device,
-        workers=args.workers,
-        patience=args.patience,
         run_name=args.run_name,
         tensorboard=not args.no_tensorboard,
+        **settings,
     )
     print(json.dumps({k: v for k, v in result.items()}, indent=2, default=str))
 

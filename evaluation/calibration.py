@@ -262,7 +262,7 @@ def main() -> None:
 
     from evaluation.eval import load_checkpoint
     from modeling.dataset import IDDSegmentation
-    from modeling.train import resolve_device
+    from modeling.config import resolve_device
 
     device = resolve_device(args.device)
     model, payload = load_checkpoint(args.checkpoint, device)

@@ -75,7 +75,7 @@ def analyse(
 ) -> dict[str, Any]:
     """Run the model over a split and collect everything the report needs."""
     from evaluation.eval import load_checkpoint
-    from modeling.train import resolve_device
+    from modeling.config import resolve_device
 
     device_t = resolve_device(device)
     model, payload = load_checkpoint(checkpoint, device_t)

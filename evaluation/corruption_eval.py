@@ -139,7 +139,7 @@ def run(
 ) -> list[dict[str, Any]]:
     """Evaluate clean, corrupted, and BN-adapted mIoU across corruptions and severities."""
     from evaluation.eval import load_checkpoint
-    from modeling.train import resolve_device
+    from modeling.config import resolve_device
 
     device_t = resolve_device(device)
     model, payload = load_checkpoint(checkpoint, device_t)
@@ -263,7 +263,7 @@ def main() -> None:
 
     if args.fgsm:
         from evaluation.eval import load_checkpoint
-        from modeling.train import resolve_device
+        from modeling.config import resolve_device
 
         device = resolve_device(args.device)
         model, payload = load_checkpoint(args.checkpoint, device)

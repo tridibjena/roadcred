@@ -104,7 +104,7 @@ def measure_stability(
     """
     from evaluation.eval import load_checkpoint
     from modeling.dataset import IDDSegmentation
-    from modeling.train import resolve_device
+    from modeling.config import resolve_device
 
     device_t = resolve_device(device)
     model, payload = load_checkpoint(checkpoint, device_t)
