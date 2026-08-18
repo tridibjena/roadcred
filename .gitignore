@@ -1,0 +1,33 @@
+# --- data (never commit; see DOWNLOADS.md) ---
+data/raw/
+data/processed/
+!data/raw/*/PUT_FILES_HERE.md
+
+# --- model weights & training artifacts ---
+checkpoints/
+runs/
+*.pt
+*.pth
+*.onnx
+!yolo26*.yaml
+
+# --- python ---
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+*.egg-info/
+
+# --- optuna / experiment stores ---
+*.db
+
+# --- node / frontend ---
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# --- os / editor ---
+.DS_Store
+.vscode/
+.idea/

@@ -1,0 +1,8 @@
+path: /Users/tridibjena/Desktop/roadsense/data/processed/binary
+train: images/train
+val: images/val
+masks_dir: masks
+nc: 2
+names:
+- nondrivable
+- drivable_good
