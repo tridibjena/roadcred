@@ -8,7 +8,13 @@ cd "$(dirname "$0")/.."
 export PYTHONPATH=.
 PY=.venv/bin/python
 
-while pgrep -f "run_ablations.py" > /dev/null 2>&1; do sleep 30; done
+# Wait for the whole queue, not just the current run: queue_experiments.sh has gaps
+# between suites where no run_ablations.py process exists, and polling only for that
+# would let this fire in one of the gaps and analyse a half-finished set of runs.
+while pgrep -f "queue_experiments.sh" > /dev/null 2>&1 \
+   || pgrep -f "run_ablations.py"     > /dev/null 2>&1; do
+  sleep 30
+done
 echo "training queue drained"
 
 BEST=$($PY - <<'PYEOF'
