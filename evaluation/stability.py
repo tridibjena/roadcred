@@ -26,8 +26,9 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import numpy as np
 import torch
@@ -103,8 +104,8 @@ def measure_stability(
         are the ones a downstream consumer would act on), and ``mean_confidence_delta``.
     """
     from evaluation.eval import load_checkpoint
-    from modeling.dataset import IDDSegmentation
     from modeling.config import resolve_device
+    from modeling.dataset import IDDSegmentation
 
     device_t = resolve_device(device)
     model, payload = load_checkpoint(checkpoint, device_t)

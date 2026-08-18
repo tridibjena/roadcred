@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import csv
 import subprocess
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -54,7 +54,7 @@ def log_run(row: dict[str, Any], path: str | Path = "results/runs.csv") -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     row = {
-        "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "timestamp": datetime.now(UTC).isoformat(timespec="seconds"),
         "git_sha": git_sha(),
         "git_dirty": git_dirty(),
         **row,

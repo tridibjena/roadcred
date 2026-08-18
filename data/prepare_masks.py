@@ -17,12 +17,12 @@ Every dataset here comes from IDD. There are no external data sources in this pr
 from __future__ import annotations
 
 import argparse
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 import numpy as np
 
-from data.idd_frames import FramePaths, discover_frames, read_mask
+from data.idd_frames import discover_frames, read_mask
 from data.sequence_split import SplitMap, leakage_report, make_splits
 
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import torch.nn as nn
 
-
 #: Architectures available to the comparison, mapped to their smp constructor name.
 SMP_ARCHITECTURES = {
     "deeplabv3plus": "DeepLabV3Plus",

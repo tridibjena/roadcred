@@ -17,8 +17,9 @@ from __future__ import annotations
 import argparse
 import copy
 import csv
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import numpy as np
 import torch
@@ -27,7 +28,7 @@ from torch.utils.data import DataLoader
 
 from evaluation.corruptions import CORRUPTIONS, WEATHER_LIKE, make_corruption
 from evaluation.metrics import ConfusionMatrix
-from modeling.dataset import IDDSegmentation, IMAGENET_MEAN, IMAGENET_STD
+from modeling.dataset import IMAGENET_MEAN, IMAGENET_STD, IDDSegmentation
 
 
 def build_corrupted_loader(
@@ -214,7 +215,7 @@ def plot_degradation(csv_path: str | Path, out_path: str | Path) -> Path:
                              sharex=True, sharey=True, constrained_layout=True)
     axes = np.atleast_1d(axes).ravel()
 
-    for ax, name in zip(axes, names):
+    for ax, name in zip(axes, names, strict=False):  # axes is padded to a full grid
         subset = corrupted[corrupted["corruption"] == name].sort_values("severity")
         ax.axhline(clean, color="#888", ls="--", lw=1, label="clean")
         ax.plot(subset["severity"], subset["miou"], "o-", color="#C44E52", ms=4, label="corrupted")

@@ -21,7 +21,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from evaluation.metrics import ConfusionMatrix
-from modeling.dataset import IDDSegmentation, IMAGENET_MEAN, IMAGENET_STD
+from modeling.dataset import IMAGENET_MEAN, IMAGENET_STD, IDDSegmentation
 
 IGNORE_INDEX = 255
 
@@ -197,7 +197,9 @@ def plot_iou_vs_frequency(report: dict[str, Any], out_path: str | Path) -> Path:
 
     fig, ax = plt.subplots(figsize=(7.2, 5.0), constrained_layout=True)
     ax.scatter(frequency[valid] * 100, iou[valid], s=70, c="#4C72B0", zorder=3)
-    for name, f, value in zip(np.array(names)[valid], frequency[valid], iou[valid]):
+    for name, f, value in zip(
+        np.array(names)[valid], frequency[valid], iou[valid], strict=True
+    ):
         ax.annotate(name, (f * 100, value), textcoords="offset points",
                     xytext=(6, 4), fontsize=8)
     if valid.sum() > 2:

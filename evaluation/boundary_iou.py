@@ -90,7 +90,7 @@ class BoundaryIoU:
     def update(self, pred: np.ndarray, target: np.ndarray) -> None:
         """Accumulate one image, or a batch of shape ``(N, H, W)``."""
         if pred.ndim == 3:
-            for p, t in zip(pred, target):
+            for p, t in zip(pred, target, strict=True):
                 self.update(p, t)
             return
         values = boundary_iou_per_class(pred, target, self.n_classes, self.dilation)
@@ -109,7 +109,7 @@ class BoundaryIoU:
         values = self.per_class()
         names = class_names or [f"class{i}" for i in range(self.n_classes)]
         out = {"boundary_miou": self.mean()}
-        for name, value in zip(names, values):
+        for name, value in zip(names, values, strict=True):
             out[f"boundary_iou/{name}"] = float(value)
         return out
 

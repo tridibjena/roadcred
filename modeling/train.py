@@ -19,7 +19,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -382,7 +381,7 @@ def main() -> None:
         tensorboard=not args.no_tensorboard,
         **settings,
     )
-    print(json.dumps({k: v for k, v in result.items()}, indent=2, default=str))
+    print(json.dumps(dict(result), indent=2, default=str))
 
 
 if __name__ == "__main__":

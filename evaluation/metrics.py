@@ -110,7 +110,7 @@ class ConfusionMatrix:
             "mean_acc": self.mean_accuracy(),
             "fw_iou": self.frequency_weighted_iou(),
         }
-        for name, value in zip(names, iou):
+        for name, value in zip(names, iou, strict=True):
             out[f"iou/{name}"] = float(value)
         return out
 

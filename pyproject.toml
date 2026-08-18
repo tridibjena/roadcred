@@ -1,0 +1,23 @@
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+exclude = [".venv", "frontend", "data/raw", "data/processed"]
+
+[tool.ruff.lint]
+# Deliberately narrow: correctness and dead-code rules, not style opinions.
+# E501 is off because several docstrings carry formulae that read worse when wrapped.
+select = ["F", "E", "W", "I", "UP", "B", "C4"]
+ignore = [
+    "E501",   # line length is handled by the formatter, not the linter
+    "B008",   # FastAPI's Depends/File defaults are the documented idiom
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests reach into private helpers deliberately to pin internal behaviour.
+"tests/*" = ["B018"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = [
+    "ignore::DeprecationWarning:starlette.*",
+]

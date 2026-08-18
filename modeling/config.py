@@ -12,15 +12,14 @@ Typical use::
 
 from __future__ import annotations
 
-import dataclasses
 import os
 import random
+from collections.abc import Mapping
 from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
-    Mapping,
     TypeVar,
     get_args,
     get_origin,
@@ -143,7 +142,9 @@ def _coerce(value: Any, target: Any) -> Any:
         args = get_args(target)
         if len(args) == 2 and args[1] is Ellipsis:
             return tuple(_coerce(v, args[0]) for v in value)
-        return tuple(_coerce(v, a) for v, a in zip(value, args))
+        # strict: a fixed-length tuple field given the wrong number of values is a
+        # config error, and failing beats silently truncating it.
+        return tuple(_coerce(v, a) for v, a in zip(value, args, strict=True))
     if origin is list:
         (arg,) = get_args(target) or (Any,)
         return [_coerce(v, arg) for v in value]
@@ -235,7 +236,7 @@ def to_dict(cfg: Config) -> dict[str, Any]:
     return flat
 
 
-def resolve_device(requested: str = "auto") -> "torch.device":
+def resolve_device(requested: str = "auto") -> torch.device:
     """Resolve ``auto`` to the best available torch device.
 
     Ordered mps > cuda > cpu, since this project's reference machine is Apple silicon.

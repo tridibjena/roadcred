@@ -25,6 +25,11 @@ jobs:
           pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
           pip install -r requirements.txt
 
+      - name: Lint
+        run: |
+          pip install ruff
+          ruff check .
+
       - name: Run tests
         # The data-prep, label-mapping, metric, loss and split tests all run on
         # synthetic fixtures, so CI needs no dataset download. Tests that require

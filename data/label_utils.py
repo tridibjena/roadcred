@@ -28,8 +28,9 @@ Two target class spaces are supported, both derived from the same table:
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable, NamedTuple
+from typing import NamedTuple
 
 import numpy as np
 
@@ -181,7 +182,7 @@ def drivable_names(table: Iterable[IDDLabel] | None = None) -> frozenset[str]:
     silently dropped into ``nondrivable``.
     """
     table = table or _EMBEDDED_TABLE
-    derived = {lab.name for lab in table if lab.category == "drivable"}
+    derived = {label.name for label in table if label.category == "drivable"}
     return frozenset(derived | DRIVABLE_NAMES)
 
 
@@ -223,11 +224,13 @@ def build_lut(
             continue  # stays ignore
         # A level ID can be shared by several names (e.g. level1Id 0 covers every
         # drivable class). Only assign a class when all names sharing the ID agree.
-        sharing = [l for l in table if getattr(l, field) == raw_id]
+        sharing = [other for other in table if getattr(other, field) == raw_id]
         if target == "binary":
-            lut[raw_id] = DRIVABLE if all(l.name in names for l in sharing) else NONDRIVABLE
+            lut[raw_id] = (
+                DRIVABLE if all(other.name in names for other in sharing) else NONDRIVABLE
+            )
         else:
-            level1_ids = {l.level1Id for l in sharing}
+            level1_ids = {other.level1Id for other in sharing}
             if len(level1_ids) == 1:
                 value = next(iter(level1_ids))
                 lut[raw_id] = value if value != IGNORE_INDEX else IGNORE_INDEX
@@ -244,7 +247,9 @@ def max_id_for_level(level: str, table: Iterable[IDDLabel] | None = None) -> int
         raise ValueError(f"Unknown level {level!r}; expected one of {sorted(LEVEL_FIELDS)}")
     field = LEVEL_FIELDS[level]
     table = table or _EMBEDDED_TABLE
-    return max(getattr(l, field) for l in table if getattr(l, field) != IGNORE_INDEX)
+    return max(
+        getattr(label, field) for label in table if getattr(label, field) != IGNORE_INDEX
+    )
 
 
 def detect_level(mask_path: str | Path) -> str:
@@ -322,7 +327,7 @@ def polygons_to_mask(
     """
     import cv2
 
-    by_name = {l.name: l for l in (table or _EMBEDDED_TABLE)}
+    by_name = {label.name: label for label in (table or _EMBEDDED_TABLE)}
     height = int(polygons_json["imgHeight"])
     width = int(polygons_json["imgWidth"])
     # Start as ignore; objects paint over it in file order (IDD lists back-to-front).

@@ -12,7 +12,7 @@ still humanly interpretable; a corruption that destroys the image tests nothing 
 
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 import numpy as np
 
@@ -104,7 +104,7 @@ def rain(image: np.ndarray, severity: int = 3) -> np.ndarray:
     xs = rng.integers(0, width, count)
     ys = rng.integers(0, height, count)
     length = max(4, height // 30)
-    for x, y in zip(xs, ys):
+    for x, y in zip(xs, ys, strict=True):
         cv2.line(layer, (int(x), int(y)), (int(x - 1), int(min(height - 1, y + length))), 1.0, 1)
     layer = cv2.GaussianBlur(layer, (3, 3), 0)[..., None]
     wet = _as_float(image) * 0.88 + 0.06

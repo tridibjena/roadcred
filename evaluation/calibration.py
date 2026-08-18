@@ -261,8 +261,8 @@ def main() -> None:
     from torch.utils.data import DataLoader
 
     from evaluation.eval import load_checkpoint
-    from modeling.dataset import IDDSegmentation
     from modeling.config import resolve_device
+    from modeling.dataset import IDDSegmentation
 
     device = resolve_device(args.device)
     model, payload = load_checkpoint(args.checkpoint, device)
