@@ -22,8 +22,9 @@ import base64
 import io
 import json
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncIterator
 
 import numpy as np
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -49,19 +50,6 @@ IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 LOW_CONFIDENCE_THRESHOLD = 0.6
 
-app = FastAPI(
-    title="RoadSense API",
-    description="7-class semantic segmentation of unstructured Indian road scenes (IDD).",
-    version="1.0.0",
-)
-app.add_middleware(
-    CORSMiddleware,
-    # Local Vite dev server. A deployed instance would pin its real origin here.
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 
 class ModelBundle:
@@ -127,10 +115,28 @@ class ModelBundle:
 bundle = ModelBundle()
 
 
-@app.on_event("startup")
-def _startup() -> None:
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    """Load the ONNX model once at startup; a missing model is not fatal."""
     if not bundle.load():
         print("No ONNX model found. Run: python -m compression.quantize --checkpoint <ckpt>")
+    yield
+
+
+app = FastAPI(
+    lifespan=lifespan,
+    title="RoadSense API",
+    description="7-class semantic segmentation of unstructured Indian road scenes (IDD).",
+    version="1.0.0",
+)
+app.add_middleware(
+    CORSMiddleware,
+    # Local Vite dev server. A deployed instance would pin its real origin here.
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 def _encode_png(array: np.ndarray) -> str:
