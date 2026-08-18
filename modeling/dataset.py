@@ -74,6 +74,10 @@ class IDDSegmentation(Dataset):
         imgsz: Target ``(height, width)``.
         train: Whether to apply training augmentation. Defaults to ``split == "train"``.
         transform: Override the built-in pipeline entirely.
+        corruption: Optional callable applied to the raw RGB uint8 image *before* the
+            transform pipeline. Used by the robustness evaluation to simulate adverse
+            conditions at test time; corruptions are deliberately never applied during
+            training, so the robustness numbers measure genuine distribution shift.
     """
 
     def __init__(
@@ -83,6 +87,7 @@ class IDDSegmentation(Dataset):
         imgsz: tuple[int, int] = (224, 320),
         train: bool | None = None,
         transform: Callable | None = None,
+        corruption: Callable[[np.ndarray], np.ndarray] | None = None,
     ):
         self.root = Path(root)
         self.split = split
@@ -97,6 +102,7 @@ class IDDSegmentation(Dataset):
             raise FileNotFoundError(f"No images in {self.image_dir}")
         is_train = train if train is not None else (split == "train")
         self.transform = transform or build_transforms(imgsz, is_train)
+        self.corruption = corruption
 
     def __len__(self) -> int:
         return len(self.images)
@@ -116,6 +122,8 @@ class IDDSegmentation(Dataset):
             raise FileNotFoundError(f"Missing mask for {image_path.name}")
         if mask.ndim == 3:
             mask = mask[..., 0]
+        if self.corruption is not None:
+            image = self.corruption(image)
         out = self.transform(image=image, mask=mask)
         return out["image"], out["mask"].long()
 

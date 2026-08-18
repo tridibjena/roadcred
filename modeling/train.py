@@ -279,11 +279,12 @@ def train(
                 f"  epoch {epoch + 1:3d}/{epochs}  train_loss={train_loss:.4f}  "
                 f"val_loss={metrics.get('val_loss', float('nan')):.4f}  "
                 f"mIoU={metrics['miou']:.4f}  best={best['miou']:.4f}"
-                + ("  *" if stale == 0 else "")
+                + ("  *" if stale == 0 else ""),
+                flush=True,
             )
         if patience and stale >= patience:
             if verbose:
-                print(f"  early stop: no improvement for {patience} epochs")
+                print(f"  early stop: no improvement for {patience} epochs", flush=True)
             break
 
     board.close()
