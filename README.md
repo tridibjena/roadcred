@@ -76,8 +76,19 @@ Measured, not assumed: a random frame split puts **94.6% of validation frames in
 that also appears in training**. `tests/test_sequence_split.py` asserts that the honest
 splits cannot leak, so the claim is enforced by CI rather than merely documented.
 
-All three splits are built and trained so the inflation can be reported as a number. The
-leaky arm is kept deliberately — as the control to argue against, never as a headline.
+All three splits are built and trained, so the inflation is a number rather than a worry:
+**+0.0139 mIoU (+2.1%)**, comparing the random split against a drive-disjoint split of the
+same pooled frames.
+
+**That result is smaller than I expected, and the reason is the interesting part.** 94.6%
+contamination moved mIoU by only ~1.4 points because frames within an IDD drive sit a
+median of ~4,400 frame indices apart — they share scene and lighting without being
+near-duplicates. *Contaminated is not the same as duplicated.* The same fact independently
+killed the temporal-consistency metric (§6). A dataset of genuinely consecutive frames
+would be expected to show a far larger gap; this one does not, and the honest thing is to
+report the modest number rather than the dramatic one I went looking for.
+
+The leaky arm is kept deliberately — as the control to argue against, never as a headline.
 
 ### 4. Write the training loop by hand
 
@@ -133,6 +144,21 @@ The API serves the ONNX model, so the thing being demoed is the thing that was m
 
 See **[`results/RESULTS.md`](results/RESULTS.md)** — generated from the CSVs in `results/`
 by `scripts/build_results.py`, so no number in it is hand-transcribed.
+
+Headline figures measured so far:
+
+| result | value |
+|---|---|
+| Drive-disjoint validation mIoU | **0.6755** (IDD's own split: 0.6913) |
+| Random-split leakage | 94.6% of val frames contaminated → **+0.0139 mIoU** inflation |
+| Calibration | overconfident at **T = 1.229**; ECE 0.0211 → 0.0027 (**−87%**) |
+| Test-time BN adaptation, severe noise | 0.3410 → **0.6196** (+0.279, no labels, no gradients) |
+| Test-time BN adaptation, severe rain | 0.4652 → **0.5615** (+0.096) |
+| FGSM, ε = 4/255 | 71.4% of clean mIoU |
+| Per-class IoU vs class rarity | Pearson **r = 0.80** on log frequency |
+
+The loss ablation, architecture comparison, distillation and compression Pareto are coded
+and queued but were not run to completion; `./scripts/reproduce.sh` runs them.
 
 All results are at IDD Lite scale on a single M1 Pro. This is a small dataset and the
 absolute mIoU values reflect that. The comparisons are controlled, so the *differences*
@@ -204,6 +230,10 @@ tests/        80 tests incl. the anti-leakage assertion
 - **Corruptions are synthetic.** The fog model is depth-independent because IDD Lite ships
   no depth map; real adverse-weather data would be a stronger test.
 - **One seed per ablation cell** in the default run, for compute reasons. `--seeds 0 1 2`
-  runs the multi-seed version; spread is reported where it was run.
+  runs the multi-seed version; spread is reported where it was run. The +0.0139 leakage
+  figure is therefore a single-seed measurement and should be read as indicative.
+- **`train_seconds` is wall-clock, not compute.** Runs left going overnight include machine
+  sleep, so that column is not a benchmark. Latency figures in the compression tables are
+  measured properly, under pinned threads.
 - **Architecture comparison is decoder-only.** All arms share an encoder family and the same
   training recipe, so it does not speak to architectures with different training needs.

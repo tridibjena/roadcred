@@ -81,37 +81,61 @@ def section_split() -> str:
     for row in rows:
         row["_label"] = SPLIT_LABELS.get(str(row.get("data")), str(row.get("data")))
 
-    honest = next((r for r in rows if r.get("data") == "level1_official"), None)
+    # The leakage comparison must hold the validation set construction fixed. `sequence`
+    # and `frame` are both re-splits of the same pooled 1607 frames at ~15% val, so they
+    # are comparable. `official` is IDD's own split with a *different* validation set
+    # (204 frames vs ~241), so comparing it against `frame` would confound the leakage
+    # effect with a change of evaluation set.
+    honest = next((r for r in rows if r.get("data") == "level1_sequence"), None)
     leaky = next((r for r in rows if r.get("data") == "level1_frame"), None)
+    official = next((r for r in rows if r.get("data") == "level1_official"), None)
 
     out = [
         "## 1. Does a random split overstate generalization?",
         "",
         "IDD groups frames into drive sequences — one folder per drive. Frames from the same",
-        "drive are seconds apart on the same road in the same light, so they are strongly",
-        "correlated. Splitting frames at random puts near-duplicates on both sides of the",
-        "train/val boundary.",
+        "drive were captured on the same road in the same conditions, so they are correlated.",
+        "Splitting frames at random puts related frames on both sides of the train/val",
+        "boundary.",
         "",
         "Measured on this dataset, a random frame split puts **94.6% of validation frames in a",
-        "drive that also appears in training** (1607 frames across 370 drives). The three",
-        "datasets below differ *only* in how frames were assigned; the model, schedule,",
-        "augmentation and seed are identical.",
+        "drive that also appears in training** (1607 frames across 370 drives). Each row below",
+        "trains the identical model, schedule, augmentation and seed; only the split differs.",
         "",
         table(rows, [("_label", "split"), ("miou", "mIoU"), ("mean_acc", "mean acc"),
                      ("pixel_acc", "pixel acc"), ("epochs_ran", "best epoch")]),
         "",
     ]
+
     if honest and leaky and honest.get("miou") and leaky.get("miou"):
         delta = leaky["miou"] - honest["miou"]
         pct = 100 * delta / honest["miou"]
         out += [
-            f"**A naive random split would have reported {fmt(leaky['miou'])} instead of "
-            f"{fmt(honest['miou'])} — an inflation of {delta:+.4f} mIoU ({pct:+.1f}%).**",
+            f"**Measured inflation: {delta:+.4f} mIoU ({pct:+.1f}%).** The random split reports",
+            f"{fmt(leaky['miou'])} where a drive-disjoint split of the same pooled frames reports",
+            f"{fmt(honest['miou'])}.",
             "",
-            "The leaky number is reported here to be argued against. Every headline figure in",
-            "this document uses a drive-disjoint split.",
+            "Only `sequence` and `frame` are compared. Both are re-splits of the same 1607",
+            "pooled frames at ~15% validation, so the split rule is the only thing that differs.",
+            "`official` is IDD's own split with a different validation set (204 frames against",
+            "~241), so including it would confound leakage with a change of evaluation set; it",
+            "is listed for reference only.",
+            "",
+            "**The inflation is real but smaller than the contamination rate suggests.** 94.6% of",
+            "validation frames sharing a drive with training moved mIoU by only ~0.014. The",
+            "reason shows up elsewhere in this project: frames within an IDD drive sit a median",
+            "of ~4,400 frame indices apart, so they share scene and lighting without being",
+            "near-duplicates. *Contaminated is not the same as duplicated* — which is precisely",
+            "why this had to be measured rather than assumed. A dataset whose frames really were",
+            "consecutive would be expected to show a far larger gap.",
             "",
         ]
+        if official:
+            out += [
+                f"For reference, IDD's own split scores {fmt(official['miou'])} on its own",
+                "204-frame validation set.",
+                "",
+            ]
     return "\n".join(out)
 
 

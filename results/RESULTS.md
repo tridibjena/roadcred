@@ -15,24 +15,46 @@ This is a small dataset and the absolute mIoU values reflect that. The compariso
 controlled — one factor varies at a time, with everything else held fixed — so the
 *differences* between rows are meaningful even where the absolute numbers are modest.
 
-Runs recorded: 1. Code version: `8299b94`.
+Runs recorded: 3. Code version: `87ec0f4`.
 
 ---
 ## 1. Does a random split overstate generalization?
 
 IDD groups frames into drive sequences — one folder per drive. Frames from the same
-drive are seconds apart on the same road in the same light, so they are strongly
-correlated. Splitting frames at random puts near-duplicates on both sides of the
-train/val boundary.
+drive were captured on the same road in the same conditions, so they are correlated.
+Splitting frames at random puts related frames on both sides of the train/val
+boundary.
 
 Measured on this dataset, a random frame split puts **94.6% of validation frames in a
-drive that also appears in training** (1607 frames across 370 drives). The three
-datasets below differ *only* in how frames were assigned; the model, schedule,
-augmentation and seed are identical.
+drive that also appears in training** (1607 frames across 370 drives). Each row below
+trains the identical model, schedule, augmentation and seed; only the split differs.
 
 | split | mIoU | mean acc | pixel acc | best epoch |
 |---|---|---|---|---|
 | IDD's own split (drive-disjoint) | 0.6913 | 0.7889 | 0.8867 | 27 |
+| Held-out drive sequences | 0.6755 | 0.7690 | 0.8866 | 27 |
+| Random frame split — **leaky control** | 0.6894 | 0.7817 | 0.8954 | 30 |
+
+**Measured inflation: +0.0139 mIoU (+2.1%).** The random split reports
+0.6894 where a drive-disjoint split of the same pooled frames reports
+0.6755.
+
+Only `sequence` and `frame` are compared. Both are re-splits of the same 1607
+pooled frames at ~15% validation, so the split rule is the only thing that differs.
+`official` is IDD's own split with a different validation set (204 frames against
+~241), so including it would confound leakage with a change of evaluation set; it
+is listed for reference only.
+
+**The inflation is real but smaller than the contamination rate suggests.** 94.6% of
+validation frames sharing a drive with training moved mIoU by only ~0.014. The
+reason shows up elsewhere in this project: frames within an IDD drive sit a median
+of ~4,400 frame indices apart, so they share scene and lighting without being
+near-duplicates. *Contaminated is not the same as duplicated* — which is precisely
+why this had to be measured rather than assumed. A dataset whose frames really were
+consecutive would be expected to show a far larger gap.
+
+For reference, IDD's own split scores 0.6913 on its own
+204-frame validation set.
 
 ---
 
