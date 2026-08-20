@@ -51,6 +51,18 @@ def read_json(name: str) -> dict[str, Any] | None:
     return json.loads(path.read_text()) if path.exists() else None
 
 
+def truthy(value: Any) -> bool:
+    """Interpret a CSV-round-tripped boolean.
+
+    ``csv`` writes Python ``False`` as the string ``"False"``, which is truthy. Testing it
+    directly silently inverts the filter and drops every row -- which is exactly how the
+    calibration-under-shift section came to render as an empty string.
+    """
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "1", "yes"}
+    return bool(value)
+
+
 def fmt(value: Any, digits: int = 4) -> str:
     """Format a cell. Reading a CSV coerces every numeric column to float, so integral
     values like an epoch number or a severity level must be rendered without a decimal
@@ -415,6 +427,249 @@ def section_pareto() -> str:
     ])
 
 
+def section_seed_variance() -> str:
+    """1b. Is the leakage effect larger than seed noise?"""
+    rows = [r for r in read_csv("seed_variance") if r.get("miou") is not None]
+    if not rows:
+        return ""
+    import statistics
+
+    by_mode: dict[str, list[float]] = {}
+    for row in rows:
+        mode = str(row.get("experiment", "")).rsplit("_s", 1)[0]
+        by_mode.setdefault(mode, []).append(float(row["miou"]))
+
+    out = [
+        "## 1b. Is that difference bigger than seed noise?",
+        "",
+        "Section 1 reports a difference between two splits from one seed each, which",
+        "cannot on its own be distinguished from run-to-run variance. Both arms are",
+        "retrained across seeds here; everything but the seed and the split rule is fixed.",
+        "",
+        "| split | seeds | mean mIoU | std | min | max |",
+        "|---|---|---|---|---|---|",
+    ]
+    for mode in ("sequence", "frame"):
+        values = by_mode.get(mode) or []
+        if not values:
+            continue
+        std = statistics.stdev(values) if len(values) > 1 else 0.0
+        out.append(
+            f"| {mode} | {len(values)} | {fmt(statistics.mean(values))} | {fmt(std)} | "
+            f"{fmt(min(values))} | {fmt(max(values))} |"
+        )
+
+    seq, frm = by_mode.get("sequence") or [], by_mode.get("frame") or []
+    if len(seq) > 1 and len(frm) > 1:
+        effect = statistics.mean(frm) - statistics.mean(seq)
+        pooled = max(statistics.stdev(seq), statistics.stdev(frm))
+        verdict = (
+            "larger than the seed spread, so the direction survives the noise"
+            if abs(effect) > 2 * pooled
+            else "**within twice the seed spread — this measurement cannot separate the "
+            "leakage effect from run-to-run variance**"
+        )
+        out += [
+            "",
+            f"Mean inflation from the leaky split: **{effect:+.4f} mIoU**, against a "
+            f"worst-arm seed standard deviation of {pooled:.4f}. The effect is {verdict}.",
+            "",
+            "Reported either way. A difference that does not clear its own noise floor is "
+            "a result about the experiment's resolution, not a null result about leakage.",
+        ]
+    out.append("")
+    return "\n".join(out)
+
+
+def section_stride() -> str:
+    """3b. Is the per-class weakness a stride problem or a data problem?"""
+    rows = [r for r in read_csv("stride_ablation") if r.get("miou") is not None]
+    if len(rows) < 2:
+        return ""
+    by_stride = {int(r.get("encoder_output_stride") or 16): r for r in rows}
+    if 8 not in by_stride or 16 not in by_stride:
+        return ""
+    base, fine = by_stride[16], by_stride[8]
+
+    geometry = (read_json("error_analysis") or {}).get("class_geometry")
+    names = [k[4:] for k in base if k.startswith("iou/")]
+
+    out = [
+        "## 3b. Stride, not scarcity",
+        "",
+        "Section 9 finds per-class IoU tracks a class's *boundary share* far better than",
+        "its rarity — pointing at thin structures lost to downsampling rather than at",
+        "class imbalance. This halves the encoder's output stride, doubling the resolution",
+        "of the features the decoder sees and changing nothing else.",
+        "",
+        f"Overall mIoU {fmt(base['miou'])} → **{fmt(fine['miou'])}** "
+        f"({float(fine['miou']) - float(base['miou']):+.4f}).",
+        "",
+        "| class | boundary share | IoU @ stride 16 | IoU @ stride 8 | Δ |",
+        "|---|---|---|---|---|",
+    ]
+    boundary = {}
+    if geometry:
+        report_names = (read_json("error_analysis") or {}).get("class_names") or []
+        boundary = dict(zip(report_names, geometry["boundary_fraction"], strict=False))
+    ordered = sorted(names, key=lambda n: -boundary.get(n, 0.0))
+    for name in ordered:
+        before, after = base.get(f"iou/{name}"), fine.get(f"iou/{name}")
+        if before is None or after is None:
+            continue
+        share = f"{100 * boundary[name]:.1f}%" if name in boundary else "—"
+        out.append(
+            f"| {name} | {share} | {fmt(before)} | {fmt(after)} | "
+            f"{float(after) - float(before):+.4f} |"
+        )
+    out += [
+        "",
+        "Rows are ordered by boundary share — thinnest first. If the diagnosis holds, the",
+        "gains concentrate at the top of this table. If they are spread evenly, the",
+        "limitation is the source resolution rather than the network, and no amount of",
+        "architectural change recovers it at 320×227.",
+        "",
+    ]
+    return "\n".join(out)
+
+
+def section_heldout() -> str:
+    """5b. The first number in this report that model selection never saw."""
+    val, test = read_json("heldout_val"), read_json("heldout_test")
+    if not val or not test:
+        return ""
+    out = [
+        "## 5b. A genuinely held-out test set",
+        "",
+        "Everywhere else in this report, validation does double duty: it is the",
+        "early-stopping criterion *and* the set the number is reported on, so model",
+        "selection has seen it. IDD withholds its own test labels, so a third partition is",
+        "carved from the labelled frames instead — drive-disjoint from **both** train and",
+        "validation, since a test set sharing drives with validation is contaminated",
+        "through model selection just as surely as through training.",
+        "",
+        "| split | frames | mIoU | boundary mIoU | pixel acc |",
+        "|---|---|---|---|---|",
+        f"| val (used for early stopping) | {val.get('n_images')} | {fmt(val.get('miou'))} | "
+        f"{fmt(val.get('boundary_miou'))} | {fmt(val.get('pixel_acc'))} |",
+        f"| **test (never seen)** | {test.get('n_images')} | **{fmt(test.get('miou'))}** | "
+        f"{fmt(test.get('boundary_miou'))} | {fmt(test.get('pixel_acc'))} |",
+        "",
+    ]
+    if val.get("miou") and test.get("miou"):
+        drop = float(val["miou"]) - float(test["miou"])
+        out += [
+            f"Selection optimism: **{drop:+.4f} mIoU**. That gap is what early stopping "
+            "bought itself on the validation set, and it is the correction that should be "
+            "mentally applied to every other number in this report.",
+            "",
+        ]
+    if test.get("boundary_miou") and test.get("miou"):
+        out += [
+            f"Boundary mIoU trails region mIoU by {float(test['miou']) - float(test['boundary_miou']):.4f} "
+            "— the model places regions better than it places their edges.",
+            "",
+        ]
+    return "\n".join(out)
+
+
+def section_shift_calibration() -> str:
+    """6b. Does the confidence score survive the shift?"""
+    rows = read_csv("shift_calibration")
+    if not rows:
+        return ""
+    clean = next((r for r in rows if r.get("corruption") == "clean"), None)
+    plain = [
+        r for r in rows if r.get("corruption") != "clean" and not truthy(r.get("bn_adapted"))
+    ]
+    adapted = {
+        (r["corruption"], r["severity"]): r for r in rows if truthy(r.get("bn_adapted"))
+    }
+    if not clean or not plain:
+        return ""
+
+    out = [
+        "## 6b. Is the confidence score still a probability in the rain?",
+        "",
+        "Section 5 calibrates on clean validation data and the serving layer applies that",
+        "temperature to everything it sees. But a deployed model cannot refit against",
+        "conditions it has not encountered, so the question is whether the *clean-fitted*",
+        "temperature still holds under shift. Reported alongside is the temperature refit",
+        "on each corruption — unreachable in deployment, and included as the ceiling.",
+        "",
+        "| condition | accuracy | mean confidence | over-confidence | ECE (deployed T) | ECE (refit) |",
+        "|---|---|---|---|---|---|",
+        f"| clean | {fmt(clean['accuracy'])} | {fmt(clean['mean_confidence'])} | "
+        f"{fmt(clean['overconfidence'])} | {fmt(clean['ece_deployed_t'])} | "
+        f"{fmt(clean['ece_refit_t'])} |",
+    ]
+    for row in plain:
+        out.append(
+            f"| {row['corruption']} s{row['severity']} | {fmt(row['accuracy'])} | "
+            f"{fmt(row['mean_confidence'])} | {fmt(row['overconfidence'])} | "
+            f"**{fmt(row['ece_deployed_t'])}** | {fmt(row['ece_refit_t'])} |"
+        )
+
+    worst = max(plain, key=lambda r: float(r["ece_deployed_t"]))
+    ratio = float(worst["ece_deployed_t"]) / max(float(clean["ece_deployed_t"]), 1e-9)
+    out += [
+        "",
+        f"Worst case: `{worst['corruption']}` at severity {worst['severity']}, where "
+        f"calibration error is **{ratio:.1f}× the clean figure**. The model does not merely "
+        "become less accurate under shift — it becomes less accurate *while remaining "
+        "confident*, which is the failure mode a confidence score exists to prevent.",
+        "",
+        "The gap between the two ECE columns is the part attributable purely to the",
+        "temperature being fitted on the wrong distribution, and is therefore the part a",
+        "shift-aware calibration scheme could in principle recover.",
+    ]
+
+    if adapted:
+        out += [
+            "",
+            "### Does BatchNorm adaptation restore confidence, or only accuracy?",
+            "",
+            "Section 6 shows label-free BN adaptation recovering much of the lost mIoU.",
+            "Whether it also repairs the confidence distribution is a separate question:",
+            "an accurate model that still misstates its certainty is not obviously safer.",
+            "",
+            "| condition | ECE before | ECE after BN | accuracy before | accuracy after |",
+            "|---|---|---|---|---|",
+        ]
+        for row in plain:
+            key = (row["corruption"], row["severity"])
+            if key not in adapted:
+                continue
+            after = adapted[key]
+            out.append(
+                f"| {row['corruption']} s{row['severity']} | {fmt(row['ece_deployed_t'])} | "
+                f"{fmt(after['ece_deployed_t'])} | {fmt(row['accuracy'])} | "
+                f"{fmt(after['accuracy'])} |"
+            )
+
+    out += [
+        "",
+        "### Selective prediction",
+        "",
+        "If the confidence number carries information, abstaining on the least confident",
+        "pixels should raise accuracy on the rest. This is the operating-point question a",
+        "perception stack actually asks, and it replaces the hardcoded 0.6 threshold in the",
+        "serving layer with a measured value.",
+        "",
+        "| condition | coverage at 95% accuracy | risk-coverage AUC |",
+        "|---|---|---|",
+        f"| clean | {fmt(clean.get('coverage_at_acc_0.95'), 3)} | "
+        f"{fmt(clean.get('risk_coverage_auc'))} |",
+    ]
+    for row in plain:
+        out.append(
+            f"| {row['corruption']} s{row['severity']} | "
+            f"{fmt(row.get('coverage_at_acc_0.95'), 3)} | {fmt(row.get('risk_coverage_auc'))} |"
+        )
+    out += ["", "![calibration under shift](figures/shift_calibration.png)", ""]
+    return "\n".join(out)
+
+
 def section_errors() -> str:
     report = read_json("error_analysis")
     if not report:
@@ -432,6 +687,49 @@ def section_errors() -> str:
     ]
     for pair in (report.get("top_confusions") or [])[:6]:
         out.append(f"| {pair['true']} | {pair['predicted']} | {100 * pair['rate']:.1f}% |")
+    correlation = report.get("geometry_vs_frequency")
+    geometry = report.get("class_geometry")
+    if correlation and geometry:
+        names = report.get("class_names") or []
+        iou = report.get("iou_per_class") or []
+        rows = sorted(
+            zip(names, iou, geometry["boundary_fraction"], geometry["pixel_fraction"], strict=False),
+            key=lambda r: r[2],
+        )
+        out += [
+            "",
+            "### Is it rarity, or is it thinness?",
+            "",
+            "The obvious reading of the per-class spread is that IoU tracks class rarity.",
+            "That reading is confounded. Below, classes are ordered by how much of each one",
+            "lies within 2px of a class border — computed from the training masks alone, with",
+            "no model involved.",
+            "",
+            "| class | share of pixels | pixels near a border | IoU |",
+            "|---|---|---|---|",
+        ]
+        for name, class_iou, boundary, frequency in rows:
+            out.append(
+                f"| {name} | {100 * frequency:.1f}% | {100 * boundary:.1f}% | {fmt(class_iou)} |"
+            )
+        r_boundary = correlation["r_iou_vs_boundary_fraction"]
+        r_frequency = correlation["r_iou_vs_log_frequency"]
+        out += [
+            "",
+            f"Across the {correlation['n_classes']} classes, IoU correlates at "
+            f"**r = {r_boundary:+.2f}** (r² = {r_boundary ** 2:.2f}) with boundary share, against "
+            f"**r = {r_frequency:+.2f}** (r² = {r_frequency ** 2:.2f}) with log frequency. Geometry "
+            "explains the spread better than rarity does, and there is a decisive single case: "
+            "`barrier-structures` is 8.5× more common than `living-thing` and scores the same "
+            "IoU, which a rarity story cannot account for.",
+            "",
+            "**Stated with its limits.** The two predictors are themselves correlated at "
+            f"r = {correlation['r_boundary_vs_log_frequency']:+.2f} — rare classes here *are* the "
+            f"thin ones — and {correlation['n_classes']} points cannot separate them. This is a "
+            "hypothesis with a counterexample, not a settled result. The experiment that would "
+            "settle it is one arm at `encoder_output_stride=8`, everything else fixed: if "
+            "geometry is binding, the thin classes gain disproportionately.",
+        ]
     out += [
         "",
         "![confusion matrix](figures/confusion_matrix.png)",
@@ -475,8 +773,10 @@ def main() -> None:
     ]
 
     sections = [
-        section_split(), section_loss(), section_arch(), section_pretrain(),
-        section_calibration(), section_robustness(), section_stability(),
+        section_split(), section_seed_variance(), section_loss(),
+        section_arch(), section_stride(), section_pretrain(),
+        section_calibration(), section_heldout(),
+        section_robustness(), section_shift_calibration(), section_stability(),
         section_compression(), section_distillation(), section_pareto(),
         section_errors(),
     ]

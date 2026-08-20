@@ -38,6 +38,7 @@ BASE_COLUMNS = [
     "encoder",
     "encoder_weights",
     "loss",
+    "encoder_output_stride",
     "seed",
     "miou",
     "mean_acc",
@@ -148,6 +149,53 @@ def suite_arch(seeds: Iterable[int]) -> tuple[list[dict], str]:
     return jobs, "results/architecture_comparison.csv"
 
 
+def suite_seedvar(seeds: Iterable[int]) -> tuple[list[dict], str]:
+    """How large is seed noise, relative to the leakage effect it has to be bigger than?
+
+    The headline generalization claim is a *difference* between the drive-disjoint and
+    random-frame splits. Reported from one seed each, that difference has no error bar and
+    cannot be shown to exceed run-to-run variance. This trains both arms across several
+    seeds so the comparison becomes a paired one with a measurable spread.
+
+    ``official`` is excluded deliberately: it evaluates on a different validation set, so
+    it is not part of the paired comparison.
+    """
+    jobs = [
+        {
+            "_label": f"{mode}_s{seed}",
+            "data_root": f"data/processed/level1_{mode}",
+            "seed": seed,
+            "run_name": f"seedvar_{mode}_s{seed}",
+        }
+        for mode in ("sequence", "frame")
+        for seed in seeds
+    ]
+    return jobs, "results/seed_variance.csv"
+
+
+def suite_stride(seeds: Iterable[int]) -> tuple[list[dict], str]:
+    """Are the weak classes limited by the network's stride, or by the source image?
+
+    Per-class IoU correlates far better with a class's boundary-pixel share than with its
+    rarity, which points at thin structures being lost to downsampling rather than to
+    class imbalance. Halving the encoder's output stride doubles the resolution of the
+    features the decoder sees, changing nothing else -- so a disproportionate gain on the
+    thin classes confirms the diagnosis, and a flat result says the information is simply
+    not present at 320x227.
+    """
+    jobs = [
+        {
+            "_label": f"stride{stride}_s{seed}",
+            "encoder_output_stride": stride,
+            "seed": seed,
+            "run_name": f"stride{stride}_s{seed}",
+        }
+        for stride in (16, 8)
+        for seed in seeds
+    ]
+    return jobs, "results/stride_ablation.csv"
+
+
 def suite_pretrain(seeds: Iterable[int]) -> tuple[list[dict], str]:
     """How much does ImageNet initialisation buy at this labelled-data scale?"""
     jobs = [
@@ -168,6 +216,8 @@ SUITES = {
     "loss": suite_loss,
     "arch": suite_arch,
     "pretrain": suite_pretrain,
+    "seedvar": suite_seedvar,
+    "stride": suite_stride,
 }
 
 

@@ -1,4 +1,4 @@
-"""Dataclass-backed configuration loading for RoadSense.
+"""Dataclass-backed configuration loading for RoadCred.
 
 Every experiment in this project is driven by a YAML file under ``configs/`` rather than
 hardcoded constants, so that ablations differ only in their config and the exact settings
@@ -95,6 +95,10 @@ class TrainConfig:
     encoder: str = "resnet34"
     #: ``imagenet`` for pretrained encoder weights, or ``null`` for random init.
     encoder_weights: str | None = "imagenet"
+    #: Encoder output stride, 8 or 16. ``null`` keeps the architecture default (16),
+    #: which is what every previously recorded run used. Setting 8 doubles the
+    #: resolution of the features the decoder sees at ~2x compute.
+    encoder_output_stride: int | None = None
 
     #: One of ``ce`` / ``weighted_ce`` / ``dice`` / ``tversky`` / ``boundary``.
     loss: str = "ce"

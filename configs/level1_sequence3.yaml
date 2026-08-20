@@ -1,6 +1,7 @@
-path: data/processed/level1_sequence
+path: data/processed/level1_sequence3
 train: images/train
 val: images/val
+test: images/test
 masks_dir: masks
 nc: 7
 names:

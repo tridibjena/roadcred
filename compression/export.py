@@ -74,6 +74,7 @@ def export_onnx(
                 "imgsz": [height, width],
                 "architecture": payload["architecture"],
                 "encoder": payload["encoder"],
+                "encoder_output_stride": payload.get("encoder_output_stride"),
                 "source_checkpoint": str(checkpoint),
                 "val_miou": payload.get("miou"),
             },

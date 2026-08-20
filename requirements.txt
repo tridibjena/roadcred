@@ -3,9 +3,8 @@ torch>=2.8.0
 torchvision>=0.23.0
 
 # --- segmentation models ---
-ultralytics>=8.4.121              # YOLO26 detect / -seg (instance) / -sem (semantic)
-segmentation-models-pytorch>=0.4.0  # DeepLabV3+ baseline
-timm>=1.0.0                       # encoders for smp + SimCLR backbone
+segmentation-models-pytorch>=0.4.0  # DeepLabV3+ / U-Net / FPN decoders
+timm>=1.0.0                       # encoder zoo backing smp
 
 # --- data / augmentation ---
 albumentations>=1.4.0
@@ -16,20 +15,12 @@ pandas>=2.0.0
 pyyaml>=6.0
 
 # --- experiments / analysis ---
-optuna>=4.0.0
-scikit-learn>=1.5.0               # t-SNE, calibration helpers
-scipy>=1.11.0                     # bootstrap CIs, stats
-matplotlib>=3.8.0
-thop>=0.1.1                       # FLOPs counting
-tqdm>=4.66.0
+matplotlib>=3.8.0                 # every figure under results/figures/
 
 # --- compression / export ---
 onnx>=1.16.0
 onnxruntime>=1.19.0               # INT8 PTQ + CPU latency benchmarking
 onnxscript>=0.1.0                 # required by torch.onnx.export (dynamo path)
-
-# --- foundation-model baseline (zero-shot, not trained on) ---
-segment-anything @ git+https://github.com/facebookresearch/segment-anything.git
 
 # --- serving ---
 fastapi>=0.115.0

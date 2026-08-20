@@ -9,23 +9,23 @@ runs/
 *.pt
 *.pth
 *.onnx
-!yolo26*.yaml
+# torch.onnx.export writes weights to a UUID-named sidecar in the cwd; compression.export
+# inlines them back into the .onnx, but the exporter's own temporaries can outlive the run.
+*.onnx.data
+*.data
+sym_shape_infer_temp.onnx
 
 # --- python ---
 .venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.ruff_cache/
 .ipynb_checkpoints/
 *.egg-info/
 
 # --- optuna / experiment stores ---
 *.db
-
-# --- node / frontend ---
-node_modules/
-frontend/dist/
-frontend/.vite/
 
 # --- os / editor ---
 .DS_Store

@@ -1,4 +1,4 @@
-path: /Users/tridibjena/Desktop/roadsense/data/processed/binary
+path: data/processed/binary
 train: images/train
 val: images/val
 masks_dir: masks

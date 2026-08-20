@@ -24,6 +24,7 @@ import numpy as np
 
 from data.idd_frames import discover_frames, read_mask
 from data.sequence_split import SplitMap, leakage_report, make_splits
+from modeling.config import REPO_ROOT
 
 
 def build_dataset(
@@ -86,14 +87,22 @@ def write_dataset_yaml(
     import yaml
 
     dataset_dir = (Path(out_root) / variant).resolve()
+    # Written repo-relative where possible. An absolute path here bakes one machine's
+    # filesystem layout into a committed file and breaks on every other checkout; only
+    # the `names` field is read back by this project, so portability costs nothing.
+    try:
+        dataset_path = str(dataset_dir.relative_to(REPO_ROOT))
+    except ValueError:
+        dataset_path = str(dataset_dir)
     config_path = Path(config_dir) / f"{variant}.yaml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(
         yaml.safe_dump(
             {
-                "path": str(dataset_dir),
+                "path": dataset_path,
                 "train": "images/train",
                 "val": "images/val",
+                **({"test": "images/test"} if (dataset_dir / "images" / "test").is_dir() else {}),
                 "masks_dir": "masks",
                 "nc": len(class_names),
                 "names": list(class_names),
@@ -127,7 +136,7 @@ def class_pixel_counts(
 
 def main() -> None:
     """CLI: ``python -m data.prepare_masks --split-mode official --target level1``."""
-    from modeling.config import REPO_ROOT, load_config
+    from modeling.config import load_config
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default=None, help="Optional YAML config")
@@ -135,7 +144,7 @@ def main() -> None:
     parser.add_argument(
         "--split-mode",
         default="official",
-        choices=["official", "sequence", "frame", "all"],
+        choices=["official", "sequence", "sequence3", "frame", "all"],
         help="'frame' is the deliberately leaky control; 'all' builds every variant",
     )
     parser.add_argument("--val-fraction", type=float, default=None)

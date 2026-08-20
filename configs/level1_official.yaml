@@ -1,4 +1,4 @@
-path: /Users/tridibjena/Desktop/roadsense/data/processed/level1_official
+path: data/processed/level1_official
 train: images/train
 val: images/val
 masks_dir: masks

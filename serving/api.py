@@ -4,9 +4,10 @@ Endpoints:
 
 * ``GET  /health``   -- liveness plus what model is loaded
 * ``POST /predict``  -- image in, colourised mask + calibrated confidence out
-* ``GET  /results``  -- every ``results/*.csv`` as JSON, for the frontend's charts
+* ``GET  /results``  -- every ``results/*.csv`` as JSON
 * ``GET  /results/{name}`` -- a single table
 * ``GET  /figures/{name}`` -- a generated PNG figure
+* ``GET  /``          -- the demo page (a single dependency-free HTML file)
 
 Inference runs through ONNX Runtime rather than PyTorch: it is the artefact the
 compression work actually produces, so the served model is the one that was benchmarked.
@@ -31,10 +32,13 @@ import numpy as np
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
-from serving.schemas import ClassShare, HealthResponse, ModelInfo, PredictResponse
+from serving.drivability import drivability
+from serving.schemas import ClassShare, Drivability, HealthResponse, ModelInfo, PredictResponse
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+STATIC_DIR = Path(__file__).resolve().parent / "static"
 RESULTS_DIR = REPO_ROOT / "results"
 FIGURES_DIR = RESULTS_DIR / "figures"
 MODEL_CANDIDATES = ("model_int8.onnx", "model_fp32.onnx")
@@ -126,14 +130,16 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     lifespan=lifespan,
-    title="RoadSense API",
+    title="RoadCred API",
     description="7-class semantic segmentation of unstructured Indian road scenes (IDD).",
     version="1.0.0",
 )
 app.add_middleware(
     CORSMiddleware,
-    # Local Vite dev server. A deployed instance would pin its real origin here.
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    # The demo page is served from this same origin, so CORS is not needed for it.
+    # Retained only for external callers hitting the API directly; a deployed instance
+    # would pin its real origin here rather than localhost.
+    allow_origins=["http://localhost:8000", "http://127.0.0.1:8000"],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -227,9 +233,12 @@ async def predict(image: UploadFile = File(...)) -> PredictResponse:
         for index, name in enumerate(names)
     ]
 
+    corridor = drivability(prediction, confidence, LOW_CONFIDENCE_THRESHOLD)
+
     return PredictResponse(
         width=width,
         height=height,
+        drivability=Drivability(**corridor),
         class_names=names,
         classes=classes,
         mean_confidence=float(confidence.mean()),
@@ -293,3 +302,9 @@ def figure(name: str) -> FileResponse:
     if not str(path).startswith(str(FIGURES_DIR.resolve())) or not path.exists():
         raise HTTPException(status_code=404, detail=f"No figure named {name!r}")
     return FileResponse(path, media_type="image/png")
+
+
+# Mounted last: the API routes above are registered first and therefore match first,
+# so this catch-all only ever serves the demo page and its assets.
+if STATIC_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="demo")

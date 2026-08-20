@@ -78,7 +78,23 @@ def quantize_model(
 
     # Shape inference and graph cleanup first; quantizing an un-preprocessed graph
     # silently skips nodes whose shapes are unknown.
-    quant_pre_process(str(onnx_path), str(prepared), skip_symbolic_shape=False)
+    #
+    # Symbolic shape inference is attempted but not required. ONNX Runtime's pass walks
+    # Concat nodes assuming every input carries a fully-ranked shape; U-Net's decoder
+    # concatenates skip connections whose batch axis was exported dynamic, and the pass
+    # then indexes off the end of a partially-known shape and raises. Falling back keeps
+    # the graph cleanup and optimisation -- only the inferred value_info is missing,
+    # which costs some quantisation *coverage*, never correctness. The alternative,
+    # letting the architecture decide whether compression works at all, is worse.
+    try:
+        quant_pre_process(str(onnx_path), str(prepared), skip_symbolic_shape=False)
+    except Exception as exc:  # noqa: BLE001 - any inference failure is recoverable here
+        print(
+            f"  symbolic shape inference failed ({type(exc).__name__}: {exc}); "
+            "retrying without it",
+            flush=True,
+        )
+        quant_pre_process(str(onnx_path), str(prepared), skip_symbolic_shape=True)
 
     quantize_static(
         str(prepared),

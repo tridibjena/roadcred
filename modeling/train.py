@@ -129,6 +129,7 @@ def train(
     architecture: str = "deeplabv3plus",
     encoder: str = "resnet34",
     encoder_weights: str | None = "imagenet",
+    encoder_output_stride: int | None = None,
     loss: str = "ce",
     epochs: int = 40,
     batch_size: int = 16,
@@ -157,6 +158,7 @@ def train(
         architecture: Key from :data:`modeling.architectures.SMP_ARCHITECTURES`.
         encoder: Backbone name.
         encoder_weights: ``imagenet`` or ``None``.
+        encoder_output_stride: ``8`` or ``16``; ``None`` keeps the architecture default.
         loss: Loss key for :func:`modeling.losses.make_loss`.
         epochs: Maximum epochs; early stopping may end training sooner.
         batch_size: Samples per step.
@@ -197,7 +199,9 @@ def train(
         counts = training_class_counts(data_root, n_classes)
         class_weights = compute_class_weights(counts).to(device_t)
 
-    model = build_model(architecture, encoder, n_classes, encoder_weights).to(device_t)
+    model = build_model(
+        architecture, encoder, n_classes, encoder_weights, encoder_output_stride
+    ).to(device_t)
     criterion = make_loss(
         loss, class_weights=class_weights, alpha=loss_alpha, tversky_beta=tversky_beta
     ).to(device_t)
@@ -235,6 +239,7 @@ def train(
                     "model": model.state_dict(),
                     "architecture": architecture,
                     "encoder": encoder,
+                    "encoder_output_stride": encoder_output_stride,
                     "n_classes": n_classes,
                     "class_names": class_names,
                     "imgsz": imgsz,
@@ -270,6 +275,7 @@ def train(
             "architecture": architecture,
             "encoder": encoder,
             "encoder_weights": str(encoder_weights),
+            "encoder_output_stride": encoder_output_stride or 16,
             "loss": loss,
             "seed": seed,
             "epochs_ran": best_epoch + 1,
@@ -322,6 +328,10 @@ def main() -> None:
     parser.add_argument("--arch", default="deeplabv3plus")
     parser.add_argument("--encoder", default="resnet34")
     parser.add_argument("--encoder-weights", default="imagenet")
+    parser.add_argument(
+        "--encoder-output-stride", type=int, default=None, choices=[8, 16],
+        help="8 doubles decoder-visible feature resolution at ~2x compute",
+    )
     parser.add_argument("--loss", default="ce")
     parser.add_argument("--epochs", type=int, default=40)
     parser.add_argument("--batch-size", type=int, default=16)
@@ -349,6 +359,7 @@ def main() -> None:
         "architecture": args.arch,
         "encoder": args.encoder,
         "encoder_weights": args.encoder_weights,
+        "encoder_output_stride": args.encoder_output_stride,
         "loss": args.loss,
         "epochs": args.epochs,
         "batch_size": args.batch_size,

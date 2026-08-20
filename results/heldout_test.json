@@ -1,0 +1,102 @@
+{
+  "checkpoint": "checkpoints/heldout_sequence3_s0.pt",
+  "data": "level1_sequence3",
+  "split": "test",
+  "tta": false,
+  "n_images": 242,
+  "params": 22438999,
+  "miou": 0.5777939972031191,
+  "pixel_acc": 0.8455866018674449,
+  "mean_acc": 0.6732790116850718,
+  "fw_iou": 0.7562913186050715,
+  "iou/drivable": 0.9088834412584095,
+  "iou/non-drivable": 0.24645620977234592,
+  "iou/living-thing": 0.28257515296621444,
+  "iou/vehicles": 0.599975946097391,
+  "iou/barrier-structures": 0.35739068311639216,
+  "iou/construction-vegetation": 0.7202318447336105,
+  "iou/sky": 0.9290447024774705,
+  "boundary_miou": 0.2055384947376384,
+  "boundary_iou/drivable": 0.37856411993764466,
+  "boundary_iou/non-drivable": 0.0514510757029158,
+  "boundary_iou/living-thing": 0.06180078139832887,
+  "boundary_iou/vehicles": 0.17069692616689627,
+  "boundary_iou/barrier-structures": 0.1154604414451216,
+  "boundary_iou/construction-vegetation": 0.2228799486969529,
+  "boundary_iou/sky": 0.43791616981560894,
+  "boundary_gap": 0.37225550246548067,
+  "confusion_matrix": [
+    [
+      5336660,
+      31411,
+      6595,
+      77537,
+      150095,
+      5834,
+      2
+    ],
+    [
+      98813,
+      118089,
+      1432,
+      7177,
+      140372,
+      29401,
+      0
+    ],
+    [
+      12834,
+      351,
+      100909,
+      109248,
+      51834,
+      15482,
+      283
+    ],
+    [
+      57660,
+      299,
+      40642,
+      1097491,
+      166481,
+      91179,
+      1219
+    ],
+    [
+      82002,
+      31927,
+      11477,
+      102740,
+      1004013,
+      576384,
+      54599
+    ],
+    [
+      11358,
+      19578,
+      6018,
+      75817,
+      407928,
+      3626932,
+      73785
+    ],
+    [
+      865,
+      298,
+      0,
+      1735,
+      29435,
+      96088,
+      3382138
+    ]
+  ],
+  "class_names": [
+    "drivable",
+    "non-drivable",
+    "living-thing",
+    "vehicles",
+    "barrier-structures",
+    "construction-vegetation",
+    "sky"
+  ]
+}

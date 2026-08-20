@@ -21,9 +21,7 @@ def git_sha(short: bool = True) -> str:
     produced it.
     """
     try:
-        args = ["git", "rev-parse", "--short" if short else "HEAD", "HEAD"]
-        if not short:
-            args = ["git", "rev-parse", "HEAD"]
+        args = ["git", "rev-parse"] + (["--short"] if short else []) + ["HEAD"]
         out = subprocess.run(args, capture_output=True, text=True, timeout=5)
         return out.stdout.strip() or "nogit"
     except (OSError, subprocess.SubprocessError):

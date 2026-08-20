@@ -1,4 +1,4 @@
-"""Pydantic response models for the RoadSense API."""
+"""Pydantic response models for the RoadCred API."""
 
 from __future__ import annotations
 
@@ -15,6 +15,30 @@ class ClassShare(BaseModel):
     colour: list[int] = Field(..., description="RGB colour used in the overlay")
 
 
+class Drivability(BaseModel):
+    """Forward-corridor summary for one frame.
+
+    A description of the segmentation, not a safety assessment. Components are exposed
+    alongside the score so a low value can be attributed: a corridor blocked by a vehicle
+    and one the model is simply unsure about are different situations with the same score.
+    """
+
+    score: float = Field(..., description="coverage x mean_confidence x (1 - obstruction)")
+    coverage: float = Field(..., description="Share of the corridor predicted drivable")
+    mean_confidence: float = Field(..., description="Mean confidence over those drivable pixels")
+    obstruction: float = Field(..., description="Share of corridor occupied by vehicles or people")
+    boundary_fraction: float = Field(
+        ..., description="Share of corridor adjacent to a class border, where the model is least reliable"
+    )
+    low_confidence: float = Field(..., description="Share of corridor below the confidence threshold")
+    corridor_pixels: int
+    road_edge_caveat: bool = Field(
+        ...,
+        description="Corridor spans a drivable/non-drivable border; the model absorbs "
+        "17-20% of true non-drivable into drivable, so the score is optimistic here",
+    )
+
+
 class PredictResponse(BaseModel):
     """Result of segmenting one uploaded image."""
 
@@ -29,6 +53,7 @@ class PredictResponse(BaseModel):
     temperature: float = Field(..., description="Calibration temperature applied to logits")
     calibrated: bool = Field(..., description="False when no calibration report was found")
     inference_ms: float
+    drivability: Drivability
     mask_png: str = Field(..., description="Base64 PNG of the colourised class mask")
     overlay_png: str = Field(..., description="Base64 PNG of the mask blended over the input")
     confidence_png: str = Field(..., description="Base64 PNG heatmap of per-pixel confidence")

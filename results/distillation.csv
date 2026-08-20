@@ -1,0 +1,4 @@
+variant,encoder,miou,params,gain_over_alone,gap_to_teacher
+teacher,checkpoints/arch_unet_resnet34_s0.pt,0.6975976262441809,24437239,,
+student_alone,resnet18,0.6750700900812935,12330839,,
+student_distilled,resnet18,0.6779175056385761,12330839,0.0028474155572826287,-0.019680120605604756

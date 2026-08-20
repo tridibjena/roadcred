@@ -35,6 +35,8 @@ def load_checkpoint(path: str | Path, device: torch.device | str = "cpu") -> tup
         payload["encoder"],
         payload["n_classes"],
         encoder_weights=None,  # weights come from the checkpoint, not from ImageNet
+        # Older checkpoints predate this key; None reproduces their default stride.
+        encoder_output_stride=payload.get("encoder_output_stride"),
     )
     model.load_state_dict(payload["model"])
     return model.to(device).eval(), payload

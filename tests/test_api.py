@@ -114,3 +114,90 @@ def _png_bytes(array: np.ndarray) -> bytes:
     buffer = io.BytesIO()
     Image.fromarray(array).save(buffer, format="PNG")
     return buffer.getvalue()
+
+
+def test_demo_page_is_served_at_root(client):
+    """The demo is a static file served by the API itself, not a separate build."""
+    response = client.get("/")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert "RoadCred" in response.text
+
+
+def test_static_mount_does_not_shadow_the_api(client):
+    """The catch-all mount is registered last, so real endpoints still match first."""
+    assert client.get("/health").status_code == 200
+    assert client.get("/results").status_code == 200
+    # A path the mount would otherwise swallow must still 404 from the API, not the mount.
+    assert client.get("/results/definitely_not_a_table").status_code == 404
+
+
+def test_drivability_scores_a_clear_road_high():
+    """A corridor that is entirely confident road, unobstructed, should score near 1."""
+    import numpy as np
+
+    from serving.drivability import DRIVABLE, drivability
+
+    prediction = np.full((64, 96), DRIVABLE, dtype=np.uint8)
+    result = drivability(prediction, np.full((64, 96), 0.99))
+    assert result["coverage"] == pytest.approx(1.0)
+    assert result["obstruction"] == pytest.approx(0.0)
+    assert result["score"] == pytest.approx(0.99, abs=1e-3)
+
+
+def test_drivability_collapses_when_the_corridor_is_blocked():
+    """Obstruction must collapse the score, not average away against high coverage.
+
+    A road that is 100% drivable but occupied by a vehicle is not "mostly fine"; a
+    weighted sum would report exactly that, which is why the score is a product.
+    """
+    import numpy as np
+
+    from serving.drivability import DRIVABLE, VEHICLES, corridor_mask, drivability
+
+    prediction = np.full((64, 96), DRIVABLE, dtype=np.uint8)
+    prediction[corridor_mask(64, 96)] = VEHICLES
+    result = drivability(prediction, np.full((64, 96), 0.99))
+    assert result["obstruction"] == pytest.approx(1.0)
+    assert result["score"] == pytest.approx(0.0)
+
+
+def test_drivability_penalises_low_confidence():
+    """Same geometry, lower confidence, strictly lower score."""
+    import numpy as np
+
+    from serving.drivability import DRIVABLE, drivability
+
+    prediction = np.full((64, 96), DRIVABLE, dtype=np.uint8)
+    sure = drivability(prediction, np.full((64, 96), 0.99))
+    unsure = drivability(prediction, np.full((64, 96), 0.55))
+    assert unsure["score"] < sure["score"]
+    assert unsure["low_confidence"] == pytest.approx(1.0)
+
+
+def test_corridor_is_a_bottom_centre_trapezoid():
+    """The corridor must sit ahead of the vehicle, not span the whole frame."""
+    from serving.drivability import corridor_mask
+
+    mask = corridor_mask(100, 100)
+    assert not mask[:50].any(), "corridor must not reach the upper half of the frame"
+    assert mask[-1].sum() > mask[60].sum(), "must widen toward the bottom of the frame"
+    assert mask.mean() < 0.25, "corridor should be a minority of the frame"
+
+
+def test_drivability_flags_the_road_edge_caveat():
+    """A corridor spanning the drivable/non-drivable border must raise the caveat."""
+    import numpy as np
+
+    from serving.drivability import DRIVABLE, NON_DRIVABLE, corridor_mask, drivability
+
+    prediction = np.full((64, 96), DRIVABLE, dtype=np.uint8)
+    # Must land *inside* the corridor: the trapezoid excludes the frame edges entirely.
+    corridor = corridor_mask(64, 96)
+    left_half = np.zeros_like(corridor)
+    left_half[:, : 96 // 2] = True
+    prediction[corridor & left_half] = NON_DRIVABLE
+
+    result = drivability(prediction, np.full((64, 96), 0.9))
+    assert result["road_edge_caveat"] is True
+    assert 0.0 < result["coverage"] < 1.0

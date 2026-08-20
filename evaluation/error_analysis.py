@@ -64,6 +64,93 @@ def per_image_miou(pred: np.ndarray, target: np.ndarray, n_classes: int) -> floa
     return confusion.miou()
 
 
+def class_geometry(
+    data_root: str | Path, n_classes: int, split: str = "train", dilation: int = 2
+) -> dict[str, list[float]]:
+    """Per-class shape statistics, computed from ground-truth masks alone.
+
+    Motivates a distinction the per-class IoU table cannot make on its own. The obvious
+    reading of that table is that IoU tracks class *rarity*; but rarity is confounded with
+    *thinness* in this dataset, and the two make different predictions. ``barrier-structures``
+    is 8.5x more common than ``living-thing`` and scores the same IoU, which a pure frequency
+    story cannot explain and a geometry story predicts.
+
+    Needs no model and no GPU -- it reads the label PNGs only -- so it is cheap enough to
+    run alongside the model-dependent analysis.
+
+    Args:
+        data_root: Prepared variant directory.
+        n_classes: Number of classes.
+        split: Which split's masks to measure. Defaults to ``train``, the distribution the
+            model actually learned from.
+        dilation: Band width, in pixels, defining "near a boundary".
+
+    Returns:
+        Per-class ``boundary_fraction`` (share of a class's pixels within ``dilation`` of a
+        class border), ``mean_component_pixels`` (mean connected-component area), and
+        ``pixel_fraction``, each a list indexed by class.
+    """
+    import cv2
+
+    kernel = np.ones((3, 3), np.uint8)
+    edge = np.zeros(n_classes)
+    total = np.zeros(n_classes)
+    components = np.zeros(n_classes)
+
+    for path in sorted((Path(data_root) / "masks" / split).glob("*.png")):
+        mask = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+        if mask is None:
+            continue
+        if mask.ndim == 3:
+            mask = mask[..., 0]
+        for cls in range(n_classes):
+            binary = (mask == cls).astype(np.uint8)
+            count = int(binary.sum())
+            if not count:
+                continue
+            total[cls] += count
+            # Interior = what survives erosion; the rest of the class is within
+            # `dilation` px of a border with some other class.
+            edge[cls] += count - int(cv2.erode(binary, kernel, iterations=dilation).sum())
+            components[cls] += cv2.connectedComponents(binary)[0] - 1
+
+    safe = np.maximum(total, 1)
+    return {
+        "boundary_fraction": [float(v) for v in edge / safe],
+        "mean_component_pixels": [float(v) for v in total / np.maximum(components, 1)],
+        "pixel_fraction": [float(v) for v in total / max(total.sum(), 1)],
+        "split": split,
+        "dilation": dilation,
+    }
+
+
+def geometry_vs_frequency(report: dict[str, Any]) -> dict[str, float] | None:
+    """Correlate per-class IoU against thinness and against rarity, and compare.
+
+    Both are reported because the comparison is the point: whichever explains more of the
+    per-class spread is the one worth acting on. With only ``n_classes`` points these are
+    weak estimates, and the collinearity between the two predictors is returned alongside
+    so the correlations are not read as independent.
+    """
+    geometry = report.get("class_geometry")
+    iou = report.get("iou_per_class")
+    if not geometry or not iou:
+        return None
+    iou = np.asarray(iou, dtype=float)
+    boundary = np.asarray(geometry["boundary_fraction"], dtype=float)
+    frequency = np.asarray(geometry["pixel_fraction"], dtype=float)
+    valid = ~np.isnan(iou) & (frequency > 0)
+    if valid.sum() < 3:
+        return None
+    log_frequency = np.log10(frequency[valid])
+    return {
+        "n_classes": int(valid.sum()),
+        "r_iou_vs_boundary_fraction": float(np.corrcoef(boundary[valid], iou[valid])[0, 1]),
+        "r_iou_vs_log_frequency": float(np.corrcoef(log_frequency, iou[valid])[0, 1]),
+        "r_boundary_vs_log_frequency": float(np.corrcoef(boundary[valid], log_frequency)[0, 1]),
+    }
+
+
 @torch.no_grad()
 def analyse(
     checkpoint: str | Path,
@@ -142,6 +229,7 @@ def analyse(
         "miou_percentiles": {
             str(p): float(np.percentile(mious, p)) for p in (5, 25, 50, 75, 95)
         },
+        "class_geometry": class_geometry(data_root, n_classes),
         "_dataset": dataset,
         "_model": model,
         "_device": device_t,
@@ -279,6 +367,7 @@ def main() -> None:
     args = parser.parse_args()
 
     report = analyse(args.checkpoint, args.data, args.split, args.device, worst_k=args.worst_k)
+    report["geometry_vs_frequency"] = geometry_vs_frequency(report)
     figure_dir = Path(args.figure_dir)
 
     plot_confusion(report, figure_dir / "confusion_matrix.png")

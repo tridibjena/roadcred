@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>RoadCred — road scene segmentation</title>
+<!--
+  Deliberately a single dependency-free file, served by the FastAPI app itself.
+
+  This replaced a React/Vite/TypeScript/Tailwind frontend. Two of that app's three pages
+  re-rendered the same CSVs that results/RESULTS.md already generates, and the third --
+  this one -- needed no framework to do its job. Collapsing it here means the demo is
+  `uvicorn serving.api:app` and nothing else: no npm install, no build step, no bundle
+  that can drift out of sync with the API it calls.
+-->
+<style>
+  :root {
+    --bg: #f8fafc; --panel: #ffffff; --border: #e2e8f0; --text: #0f172a;
+    --muted: #64748b; --accent: #0f766e; --accent-soft: #ccfbf1; --danger: #b91c1c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    border-bottom: 1px solid var(--border); padding: 18px 24px; background: var(--panel);
+  }
+  header h1 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
+  header p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+  main { max-width: 1180px; margin: 0 auto; padding: 24px; }
+  .grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr); gap: 20px; }
+  @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+  .panel {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px;
+  }
+  .panel h2 {
+    margin: 0 0 12px; font-size: 12px; text-transform: uppercase;
+    letter-spacing: 0.07em; color: var(--muted); font-weight: 600;
+  }
+  #drop {
+    border: 1.5px dashed var(--border); border-radius: 10px; padding: 38px 20px;
+    text-align: center; color: var(--muted); cursor: pointer; transition: 0.15s;
+  }
+  #drop:hover, #drop.over { border-color: var(--accent); background: var(--accent-soft); }
+  #drop strong { color: var(--text); display: block; margin-bottom: 4px; }
+  .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+  .tabs button {
+    font: inherit; font-size: 13px; padding: 6px 13px; cursor: pointer;
+    border: 1px solid var(--border); background: transparent; color: var(--muted);
+    border-radius: 999px;
+  }
+  .tabs button[aria-selected="true"] {
+    background: var(--accent); border-color: var(--accent); color: var(--bg); font-weight: 600;
+  }
+  .tabs button:disabled { opacity: 0.4; cursor: not-allowed; }
+  #canvas-wrap { position: relative; min-height: 200px; }
+  .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 700px) { .compare { grid-template-columns: 1fr; } }
+  .pane { min-width: 0; }
+  .pane img {
+    width: 100%; border-radius: 8px; display: block; background: var(--bg);
+    image-rendering: crisp-edges;
+  }
+  .pane figcaption {
+    font-size: 11px; color: var(--muted); margin-top: 6px; text-align: center;
+    text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .stat { border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px; }
+  .stat span { display: block; font-size: 11px; color: var(--muted); }
+  .stat b { font-size: 17px; font-variant-numeric: tabular-nums; font-weight: 600; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .swatch {
+    display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+    margin-right: 7px; vertical-align: middle;
+  }
+  .note { font-size: 12px; color: var(--muted); margin-top: 12px; line-height: 1.5; }
+  .msg { border-radius: 8px; padding: 10px 12px; font-size: 13px; margin-bottom: 14px; }
+  .msg.err { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
+  .msg.info { background: var(--accent-soft); color: var(--text); }
+  .score { font-size: 34px; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1; }
+  .parts { margin-top: 10px; font-size: 12px; color: var(--muted); }
+  .parts div { display: flex; justify-content: space-between; padding: 3px 0; }
+  .parts b { color: var(--text); font-variant-numeric: tabular-nums; font-weight: 600; }
+  .caveat { color: var(--danger); margin-top: 8px; font-size: 12px; line-height: 1.45; }
+  .hidden { display: none; }
+  code { font-size: 12px; background: var(--bg); padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>RoadCred — 7-class segmentation of unstructured road scenes</h1>
+  <p id="model-line">Loading model…</p>
+</header>
+
+<main>
+  <div id="alert" class="msg err hidden"></div>
+
+  <div class="grid">
+    <div>
+      <div class="panel">
+        <div class="tabs" id="tabs">
+          <button data-layer="overlay"  aria-selected="true"  disabled>Overlay</button>
+          <button data-layer="mask"     aria-selected="false" disabled>Mask</button>
+          <button data-layer="confidence" aria-selected="false" disabled>Confidence</button>
+        </div>
+        <div id="canvas-wrap">
+          <div id="drop">
+            <strong>Drop a road-scene image here</strong>
+            or click to choose a file
+          </div>
+          <div id="compare" class="compare hidden">
+            <figure class="pane">
+              <img id="view-input" alt="Uploaded frame">
+              <figcaption>input</figcaption>
+            </figure>
+            <figure class="pane">
+              <img id="view" alt="Segmentation result">
+              <figcaption id="view-caption">overlay</figcaption>
+            </figure>
+          </div>
+        </div>
+        <p class="note" id="layer-note"></p>
+      </div>
+    </div>
+
+    <div>
+      <div class="panel" style="margin-bottom:20px">
+        <h2>Drivable path</h2>
+        <div id="drive-score" class="score">—</div>
+        <div id="drive-parts" class="parts"></div>
+        <p class="note" id="drive-note">
+          Describes the forward corridor of the segmentation, not the safety of the road.
+        </p>
+      </div>
+
+      <div class="panel" style="margin-bottom:20px">
+        <h2>Prediction</h2>
+        <div class="stats" id="stats">
+          <div class="stat"><span>mean confidence</span><b>—</b></div>
+          <div class="stat"><span>inference</span><b>—</b></div>
+          <div class="stat"><span>low-confidence pixels</span><b>—</b></div>
+          <div class="stat"><span>temperature</span><b>—</b></div>
+        </div>
+        <p class="note" id="calib-note"></p>
+      </div>
+
+      <div class="panel">
+        <h2>Class composition</h2>
+        <table>
+          <thead>
+            <tr><th>class</th><th class="num">pixels</th><th class="num">conf.</th></tr>
+          </thead>
+          <tbody id="classes">
+            <tr><td colspan="3" style="color:var(--muted)">No prediction yet.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <p class="note">
+    Inference runs through ONNX Runtime on CPU — the same artefact benchmarked in
+    <code>results/RESULTS.md</code>, so what is demonstrated here is what was measured.
+    Confidence is temperature-scaled; scaling is monotone, so it never changes the
+    predicted class, only the certainty attached to it.
+  </p>
+</main>
+
+<input type="file" id="file" accept="image/*" class="hidden">
+
+<script>
+const LAYER_NOTES = {
+  overlay: "Predicted classes blended over the input — the quickest way to spot where the model has misplaced a boundary.",
+  mask: "Predicted class per pixel. Flat colour makes shape errors obvious that the overlay hides.",
+  confidence: "Per-pixel calibrated confidence, dark to bright. Boundaries and thin structures should look darker — that is where the model is genuinely least sure.",
+};
+
+const el = (id) => document.getElementById(id);
+const layers = {};
+let current = "overlay";
+
+function fail(message) {
+  const box = el("alert");
+  box.textContent = message;
+  box.classList.remove("hidden");
+}
+function clearFail() { el("alert").classList.add("hidden"); }
+
+async function loadHealth() {
+  try {
+    const response = await fetch("/health");
+    const { status, model } = await response.json();
+    if (status !== "ok" || !model.loaded) {
+      el("model-line").textContent = "No model loaded.";
+      fail("No ONNX model found. Run: python -m compression.quantize --checkpoint <ckpt>");
+      return;
+    }
+    const bits = [
+      `${model.architecture ?? "?"} / ${model.encoder ?? "?"}`,
+      (model.precision ?? "fp32").toUpperCase(),
+      model.imgsz?.length ? `${model.imgsz[1]}×${model.imgsz[0]}` : null,
+      model.val_miou != null ? `val mIoU ${model.val_miou.toFixed(4)}` : null,
+    ].filter(Boolean);
+    el("model-line").textContent = bits.join(" · ");
+  } catch (error) {
+    el("model-line").textContent = "API unreachable.";
+    fail(`Could not reach the API: ${error.message}`);
+  }
+}
+
+function selectLayer(name) {
+  if (!layers[name]) return;
+  current = name;
+  el("view").src = layers[name];
+  el("view-caption").textContent = name;
+  el("layer-note").textContent = LAYER_NOTES[name] ?? "";
+  for (const button of el("tabs").children) {
+    button.setAttribute("aria-selected", String(button.dataset.layer === name));
+  }
+}
+
+function render(result, originalUrl) {
+  layers.overlay = `data:image/png;base64,${result.overlay_png}`;
+  layers.mask = `data:image/png;base64,${result.mask_png}`;
+  layers.confidence = `data:image/png;base64,${result.confidence_png}`;
+
+  // The input stays on screen at all times, so the eye can compare against it
+  // without having to remember what the previous tab looked like.
+  el("view-input").src = originalUrl;
+  el("drop").classList.add("hidden");
+  el("compare").classList.remove("hidden");
+  for (const button of el("tabs").children) button.disabled = false;
+  selectLayer(current);
+
+  const percent = (v) => `${(100 * v).toFixed(1)}%`;
+  const stats = [
+    ["mean confidence", percent(result.mean_confidence)],
+    ["inference", `${result.inference_ms.toFixed(0)} ms`],
+    ["low-confidence pixels", percent(result.low_confidence_fraction)],
+    ["temperature", result.temperature.toFixed(3)],
+  ];
+  el("stats").innerHTML = stats
+    .map(([label, value]) => `<div class="stat"><span>${label}</span><b>${value}</b></div>`)
+    .join("");
+  el("calib-note").textContent = result.calibrated
+    ? `Confidence is temperature-calibrated (T = ${result.temperature.toFixed(3)}, fitted on held-out validation pixels).`
+    : "No calibration report found — confidence is the raw softmax maximum and is likely overconfident.";
+
+  const d = result.drivability;
+  el("drive-score").textContent = d.score.toFixed(3);
+  el("drive-parts").innerHTML = [
+    ["corridor predicted drivable", percent(d.coverage)],
+    ["mean confidence on that road", percent(d.mean_confidence)],
+    ["blocked by vehicles / people", percent(d.obstruction)],
+    ["near a class boundary", percent(d.boundary_fraction)],
+  ].map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join("");
+  el("drive-note").innerHTML =
+    "score = coverage x confidence x (1 - obstruction), over the forward corridor. "
+    + "Describes the segmentation, not the safety of the road."
+    + (d.road_edge_caveat
+        ? `<div class="caveat">Corridor spans a drivable / non-drivable border. This model
+           absorbs 17-20% of true non-drivable into drivable, so the score is optimistic
+           here — see RESULTS.md &sect;9.</div>`
+        : "");
+
+  const rows = [...result.classes]
+    .sort((a, b) => b.pixel_fraction - a.pixel_fraction)
+    .filter((c) => c.pixel_fraction > 0);
+  el("classes").innerHTML = rows.length
+    ? rows.map((c) => `
+        <tr>
+          <td><span class="swatch" style="background: rgb(${c.colour.join(",")})"></span>${c.name}</td>
+          <td class="num">${percent(c.pixel_fraction)}</td>
+          <td class="num">${percent(c.mean_confidence)}</td>
+        </tr>`).join("")
+    : `<tr><td colspan="3" style="color:var(--muted)">No classes predicted.</td></tr>`;
+}
+
+async function predict(file) {
+  if (!file) return;
+  clearFail();
+  el("layer-note").textContent = "Segmenting\u2026";
+  const body = new FormData();
+  body.append("image", file);
+  try {
+    const response = await fetch("/predict", { method: "POST", body });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail ?? `${response.status} ${response.statusText}`);
+    }
+    render(await response.json(), URL.createObjectURL(file));
+  } catch (error) {
+    el("layer-note").textContent = "";
+    fail(error.message);
+  }
+}
+
+el("drop").addEventListener("click", () => el("file").click());
+el("view").addEventListener("click", () => el("file").click());
+el("file").addEventListener("change", (event) => predict(event.target.files[0]));
+el("tabs").addEventListener("click", (event) => {
+  const button = event.target.closest("button");
+  if (button && !button.disabled) selectLayer(button.dataset.layer);
+});
+for (const type of ["dragenter", "dragover"]) {
+  document.addEventListener(type, (event) => {
+    event.preventDefault();
+    el("drop").classList.add("over");
+  });
+}
+for (const type of ["dragleave", "drop"]) {
+  document.addEventListener(type, (event) => {
+    event.preventDefault();
+    el("drop").classList.remove("over");
+  });
+}
+document.addEventListener("drop", (event) => predict(event.dataTransfer?.files?.[0]));
+
+loadHealth();
+</script>
+</body>
+</html>

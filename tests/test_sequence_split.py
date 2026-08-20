@@ -18,6 +18,7 @@ from data.sequence_split import (
     leakage_report,
     make_splits,
     sequence_split,
+    sequence_split_3way,
 )
 
 
@@ -89,3 +90,38 @@ def test_real_idd_splits_are_drive_disjoint(mode, idd_available):
     report = leakage_report(make_splits(frames, mode, 0.15, 0))
     assert report["shared_drives"] == 0, f"{mode} split leaked drives"
     assert report["contaminated_val_frames"] == 0
+
+
+def test_three_way_split_is_mutually_drive_disjoint():
+    """Test must be disjoint from train *and* val, not just from train.
+
+    A test set sharing drives with validation is contaminated through model selection --
+    early stopping chose the checkpoint on those very drives -- even though no training
+    gradient ever touched it.
+    """
+    frames = make_frames(20, 3)
+    splits = sequence_split_3way(frames, val_fraction=0.2, test_fraction=0.2, seed=0)
+
+    drives = {name: {f.drive for f in part} for name, part in splits.items()}
+    assert not drives["train"] & drives["val"]
+    assert not drives["train"] & drives["test"]
+    assert not drives["val"] & drives["test"]
+
+    report = leakage_report(splits)
+    assert report["contaminated_val_frames"] == 0
+    assert report["contaminated_test_frames"] == 0
+
+
+def test_three_way_split_partitions_every_frame_exactly_once():
+    frames = make_frames(20, 3)
+    splits = sequence_split_3way(frames, seed=1)
+    recovered = [f for part in splits.values() for f in part]
+    assert len(recovered) == len(frames)
+    assert {f.key for f in recovered} == {f.key for f in frames}
+
+
+def test_three_way_split_is_reachable_through_make_splits():
+    frames = make_frames(20, 3)
+    splits = make_splits(frames, "sequence3", val_fraction=0.2, seed=0)
+    assert set(splits) == {"train", "val", "test"}
+    assert leakage_report(splits)["contaminated_test_frames"] == 0

@@ -292,7 +292,7 @@ def remap_mask(
             per image inside a dataset-wide loop.
 
     Returns:
-        ``uint8`` array of the same shape in the RoadSense class space.
+        ``uint8`` array of the same shape in the RoadCred class space.
     """
     mask = np.asarray(mask, dtype=np.uint8)
     if lut is None:
