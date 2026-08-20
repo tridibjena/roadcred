@@ -1,5 +1,20 @@
 # RoadCred — Unstructured Road Scene Segmentation
 
+![A dirt road in India with two parked vehicles and pedestrians, shown three ways: the raw input frame, the same frame with seven predicted classes painted over it, and a per-pixel confidence map that is bright inside regions and dark along every class boundary](docs/images/demo_hero.png)
+
+**Left to right: what the camera sees, what the model says, and where the model is unsure.**
+
+The first two panels are the task — 7 classes over an unstructured Indian road, where there
+is no lane marking, the drivable surface is dirt, and the boundary between road and
+not-road is a judgement call rather than a painted line. **The third panel is the
+project.** It is the model's own calibrated
+confidence, and it renders as an *edge map*: bright and certain across road, sky and
+vegetation, dark along every boundary between them. The model is least sure exactly where
+the classes meet — which turns out to explain its per-class accuracy far better than class
+rarity does, and is the finding the rest of this README builds to.
+
+---
+
 7-class semantic segmentation of Indian road scenes on the India Driving Dataset, built as
 a study in *evaluation rigour* rather than leaderboard chasing. A hand-written PyTorch
 training loop drives every experiment; a controlled ablation varies one factor at a time;
@@ -291,6 +306,21 @@ ahead. That 18.7% is the whole reason the score sits at 0.649 rather than 0.80, 
 breakdown is what makes the difference readable. **Prediction** carries the calibrated mean
 confidence and the temperature it was scaled by; **Class composition** gives per-class
 pixel share and confidence.
+
+The **mask** layer drops the photograph entirely and shows the raw class map:
+
+![Demo page on the mask layer: the predicted class map alone, flat colour per class, with no input image blended underneath](docs/images/demo_mask.png)
+
+Worth a look precisely because it is unflattering. With the photograph gone there is
+nothing left to lend the output plausibility, and the shape errors stand on their own. The
+vehicles hold clean silhouettes. But read the class table beside it: **`non-drivable` is
+0.0% of this frame.** A dirt road with an unpaved shoulder on both sides, and the model
+predicts not one pixel of it — the entire road edge has gone to `drivable` (purple) or
+`barrier-structures` (dusty rose).
+
+That is the absorption failure mode of §8, caught in the act. Not a degraded boundary: an
+*absent class*. The overlay hides it because the underlying photograph supplies the edge
+your eye expects; the flat mask has no such cover.
 
 **The confidence view is the one worth looking at**, because it reproduces this project's
 per-class finding on a single frame, with no analysis:

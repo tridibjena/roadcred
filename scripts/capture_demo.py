@@ -18,16 +18,24 @@ Run::
 from __future__ import annotations
 
 import argparse
+import io
 import socket
 import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Any
 from urllib.request import urlopen
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 #: Layer tabs to capture, and the filename each is written to.
 LAYERS = ("overlay", "mask", "confidence")
+#: Panels composed into the README hero strip, left to right. The input is repeated by
+#: every layer view, so it is taken once and the remaining panels are output only.
+HERO_LAYERS = ("overlay", "confidence")
+#: Gap between hero panels, and the page background they sit on, in device pixels.
+HERO_GAP = 28
+HERO_BACKGROUND = (247, 248, 250)
 
 
 def _free_port() -> int:
@@ -48,6 +56,56 @@ def _wait_for_health(url: str, timeout: float = 60.0) -> bool:
         except OSError:
             time.sleep(0.5)
     return False
+
+
+def _capture_hero(page: Any, out_dir: Path) -> Path:
+    """Compose the README hero: input, segmentation and confidence side by side.
+
+    Cropped from the live page rather than assembled from the raw ``/predict`` PNGs, so
+    the strip shows exactly what a visitor sees -- same rounded corners, same captions,
+    same scaling -- and cannot drift from the demo it advertises.
+
+    The three panels answer the three questions a reader arrives with, in order: what does
+    the input look like, what does the model output, and does it know where it is unsure.
+    That last panel is the project's central finding rendered without a single number.
+
+    Args:
+        page: A Playwright page with a prediction already displayed.
+        out_dir: Directory to write ``demo_hero.png`` into.
+
+    Returns:
+        The written path.
+    """
+    from PIL import Image
+
+    panes = page.query_selector_all("#compare figure.pane")
+    if len(panes) < 2:
+        raise RuntimeError("demo page did not render both comparison panes")
+    input_pane, output_pane = panes[0], panes[1]
+
+    tiles: list[Image.Image] = [Image.open(io.BytesIO(input_pane.screenshot()))]
+    for layer in HERO_LAYERS:
+        page.click(f'button[data-layer="{layer}"]')
+        page.wait_for_function(
+            "() => { const i = document.getElementById('view');"
+            " return i.complete && i.naturalWidth > 0; }"
+        )
+        page.wait_for_timeout(150)
+        tiles.append(Image.open(io.BytesIO(output_pane.screenshot())))
+
+    width = sum(t.width for t in tiles) + HERO_GAP * (len(tiles) - 1)
+    height = max(t.height for t in tiles)
+    strip = Image.new("RGB", (width, height), HERO_BACKGROUND)
+    x = 0
+    for tile in tiles:
+        # Bottom-align: the captions sit under each image and should form one line.
+        strip.paste(tile, (x, height - tile.height))
+        x += tile.width + HERO_GAP
+
+    path = out_dir / "demo_hero.png"
+    strip.save(path, optimize=True)
+    print(f"  {path.relative_to(REPO_ROOT)}", flush=True)
+    return path
 
 
 def capture(
@@ -101,6 +159,7 @@ def capture(
                 page.screenshot(path=str(path))
                 written.append(path)
                 print(f"  {path.relative_to(REPO_ROOT)}", flush=True)
+            written.append(_capture_hero(page, out_dir))
             page.close()
             browser.close()
     finally:
