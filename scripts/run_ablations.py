@@ -28,7 +28,7 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from modeling.train import train  # noqa: E402
+from modeling.train import DEFAULTS, train  # noqa: E402
 
 #: Columns kept in the per-suite CSVs, in order. Per-class IoU columns are appended.
 BASE_COLUMNS = [
@@ -251,6 +251,11 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--patience", type=int, default=8)
     parser.add_argument("--data", default="data/processed/level1_official")
+    parser.add_argument(
+        "--workers", type=int, default=DEFAULTS.workers,
+        help="Dataloader workers. 0 suits MPS (loading outpaces training); raise it on "
+             "a CUDA GPU if utilisation shows the GPU waiting for data",
+    )
     args = parser.parse_args()
 
     common = {
@@ -258,6 +263,7 @@ def main() -> None:
         "epochs": args.epochs,
         "batch_size": args.batch_size,
         "patience": args.patience,
+        "workers": args.workers,
         "tensorboard": True,
         "verbose": True,
     }

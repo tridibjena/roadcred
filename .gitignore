@@ -31,3 +31,8 @@ __pycache__/
 .DS_Store
 .vscode/
 .idea/
+
+# --- run-log lock and staging files (modeling/tracking.py), stage logs ---
+results/*.lock
+results/*.tmp
+logs/
