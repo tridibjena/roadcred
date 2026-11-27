@@ -33,11 +33,10 @@ dependency-free demo page.
 > into training via shared drive sequences, and reported drive-disjoint results throughout.
 > Ran controlled ablations over five segmentation losses and four decoder architectures,
 > measured confidence calibration with leakage-free temperature scaling, evaluated
-> robustness across ten implemented test-time corruptions (five evaluated) with
-> label-free BatchNorm adaptation, and
+> robustness across ten test-time corruptions with label-free BatchNorm adaptation, and
 > shipped the model as an INT8-quantized ONNX service behind FastAPI, which reduces each
-> frame to a bounded drivable-path score that reports its own known failure mode.
-> 123 unit tests in CI, including an assertion that the generalization split cannot leak.
+> frame to a bounded drivable-path score that flags its own known failure mode.
+> 144 tests in CI, including an assertion that the generalization split cannot leak.
 
 ---
 
@@ -80,8 +79,12 @@ derived from IDD's official label table **keyed by class name**, never by hardco
 This caught a real bug. IDD Lite ships bare `<frame>_label.png` files that contain *level-1*
 IDs, but nothing in the filename says so. Filename-based level detection defaulted them to
 level-3, which silently mapped `level1Id 1` — sidewalk, rail track, non-drivable fallback —
-onto **drivable**. That is precisely the boundary this project measures. `remap_mask` now
-range-checks every mask against its assumed level and raises rather than mis-mapping.
+onto **drivable**. That is precisely the boundary this project measures. `detect_level` now
+recognises IDD Lite's masks as level-1, and data preparation audits every mask set before
+writing anything. No single mask can reveal this bug — 0–6 is a legal level-3 range — so the
+audit works across the whole dataset: masks read as a finer level whose IDs never leave the
+level-1 range raise. Per mask, an ID beyond the assumed level's range raises too, which
+catches the reverse mistake.
 
 ### 3. Make the evaluation honest before optimising the number
 
@@ -101,23 +104,21 @@ distribution rather than a point estimate:
 | drive-disjoint | 3 | 0.6768 | 0.0032 |
 | random frame — **leaky control** | 3 | 0.6894 | 0.0009 |
 
-**Inflation +0.0126 mIoU, at 3.9× the worst-arm seed spread.** The effect clears its own
-noise floor, which a single-seed measurement could never have shown.
+**Inflation +0.0126 mIoU (Welch's t-test, p = 0.016).** The effect clears its own noise
+floor, which a single-seed measurement could never have shown.
 
 **The magnitude is smaller than I expected, and the reason is the interesting part.** 94.6%
 contamination moved mIoU by only ~1.3 points because frames within an IDD drive sit a
-median of ~4,400 frame indices apart — they share scene and lighting without being
+median of ~4,200 frame indices apart — they share scene and lighting without being
 near-duplicates. *Contaminated is not the same as duplicated.* The same fact independently
 killed the temporal-consistency metric (§6). A dataset of genuinely consecutive frames
 would be expected to show a far larger gap; this one does not, and the honest thing is to
 report the modest number rather than the dramatic one I went looking for.
 
-**A second finding fell out of running it properly.** The leaky arm is *more stable* across
-seeds (std 0.0009) than the honest one (std 0.0032). Contamination does not only inflate
-the mean — it suppresses the variance, because validation frames with near-relatives in
-training depend less on which drives happened to land where. A leaky benchmark therefore
-looks more reliable while telling you less, which is a nastier property than the inflation
-itself.
+The leaky arm also had the smaller seed spread (std 0.0009 against 0.0032). With three seeds
+per arm that difference is not distinguishable from chance (F-test, p = 0.13), and every
+seed trained on the same split, so it cannot speak to which drives land where. It is
+recorded as an observation, not a finding.
 
 The leaky arm is kept deliberately — as the control to argue against, never as a headline.
 
@@ -140,8 +141,10 @@ processes bought nothing and added spawn overhead and failure modes.
 The serving layer returns a confidence score, so that number has to mean something.
 Temperature scaling is fitted on one half of the validation pixels and **every reported
 figure computed on the other half** — fitting and reporting on the same pixels is the usual
-way calibration results get overstated. The implementation recovers a known temperature of
-3.0 as 2.973 in test.
+way calibration results get overstated. The pixels are drawn uniformly from every
+validation frame; an earlier version filled its budget from the first 56 frames in filename
+order and fitted T = 1.240, where the uniform sample gives 1.304. `tests/test_calibration.py`
+checks that a known temperature of 3.0 is recovered.
 
 ### 6. Measure robustness without inventing a dataset
 
@@ -150,13 +153,13 @@ noise, JPEG …) are implemented and applied **at test time only** — the train
 deliberately excludes them — so the degradation measures genuine distribution shift rather
 than a train/test augmentation mismatch. Each corrupted set is re-evaluated after
 **test-time BatchNorm adaptation**, which re-estimates running statistics on the shifted
-data with no labels and no gradient steps. Five of the ten (fog, rain, low light, motion
-blur, Gaussian noise) were evaluated at severities 1 and 3 in the run reported here; the
-remaining five and severities 2/4/5 are implemented and driven by the same command.
+data with no labels and no gradient steps. All ten are evaluated at severities 1 and 3, and
+five of them (fog, rain, low light, motion blur, Gaussian noise) also test calibration under
+shift; severities 2/4/5 are implemented and driven by the same command.
 
 **One idea was cut after checking the data.** Frame-to-frame temporal flicker would be the
 natural stability metric, but IDD Lite's frames are not temporally adjacent — the median gap
-between consecutive frames of a drive is ~4,400 frame indices, and only 0.5% are within 30
+between consecutive frames of a drive is ~4,200 frame indices, and only 0.4% are within 30
 frames. A flicker number computed from them would have measured scene change. It was
 replaced with perturbation stability, which measures the same property honestly.
 
@@ -193,11 +196,16 @@ exactly the way that matters: a corridor scoring low because the model is unsure
 scoring low because a bus is parked in it are different situations that a single number
 cannot separate.
 
-**It reports its own known failure mode.** This project measured that 17–20% of true
-`non-drivable` is absorbed into `drivable`, and that six independent interventions failed to
-fix it — so this score is optimistic at precisely the boundary that matters most. When the
-corridor spans a drivable/non-drivable border the response sets a `road_edge_caveat` flag
-and the demo page renders the warning rather than burying it.
+**It flags its own known failure mode.** This project measured that about 20% of true
+`non-drivable` is absorbed into `drivable`, and of the interventions tried, only class
+re-weighting improved that beyond run-to-run noise — so wherever absorption lands inside the
+corridor, the score is optimistic. Whenever the model draws a road edge in the corridor or
+within 1% of image width of it, the response sets `road_edge_caveat` and the demo page
+renders the warning rather than burying it. On validation the flag fired on all 22 frames
+where absorption reached inside the corridor, and on half of all frames overall: it trades
+false alarms for never staying silent. The rule it replaced — fire when the corridor holds
+*predicted* non-drivable — caught 14 of the 22, and was blind by construction to total
+absorption ([`RESULTS.md`](results/RESULTS.md) §8d).
 
 It is a **description of the segmentation, not an assessment of the road**, and calling it
 "drivability" does not make it one. The out-of-scope restriction in
@@ -216,14 +224,14 @@ Headline figures measured so far:
 | result | value |
 |---|---|
 | Best validation mIoU | **0.6979** (DeepLabV3+/ResNet-34, encoder stride 8) |
-| Random-split leakage, 3 seeds/arm | **+0.0126 mIoU** inflation, **3.9× the seed spread** |
-| Held-out test set | val 0.5782 → test 0.5778: **selection optimism +0.0004** |
-| Encoder stride 16 → 8 | **+0.0077 mIoU**, concentrated in boundary-heavy classes |
-| Run-to-run noise, identical config *and seed* | **0.0012 mIoU** (MPS is nondeterministic) |
+| Random-split leakage, 3 seeds/arm | **+0.0126 mIoU** inflation (Welch's t-test p = 0.016) |
+| Held-out test set, one run | val 0.6669 → test 0.6690: **no measurable early-stopping optimism** |
+| Encoder stride 16 → 8 | **+0.0077 mIoU** (3.5× the identical-run range), concentrated in boundary-heavy classes |
+| Run-to-run noise, identical config *and seed* | **0.0022 mIoU** across 4 runs; up to **0.0145** per class |
 | INT8 quantization | **4.4× faster, 3.9× smaller, −0.0001 mIoU** (42.4 ms, 22.9 MB, CPU) |
-| Distillation vs same student trained alone | **+0.0028 mIoU** at identical capacity |
-| Calibration | overconfident at **T = 1.240**; ECE 0.0209 → **0.0043** (−79%) |
-| Confidence under severe motion blur | ECE **0.0026 → 0.0646** — 25× worse, accuracy only 0.91 → 0.82 |
+| Distillation vs same student trained alone | **+0.0010 mIoU**, inside run-to-run noise: unresolved at one seed |
+| Calibration | overconfident at **T = 1.304**; ECE 0.0272 → **0.0039** (−86%) |
+| Confidence under severe motion blur | ECE **0.0041 → 0.0600** — 15× worse, accuracy only 0.89 → 0.82 |
 | Test-time BN adaptation, severe shot noise | 0.2688 → **0.5730** (+0.304, no labels, no gradients) |
 | FGSM, ε = 4/255 | **71.7%** of clean mIoU |
 
@@ -233,7 +241,7 @@ The obvious reading of the per-class table is that errors track class rarity. Th
 is a confound, and this project ended up disproving its own earlier claim.
 
 What predicts a class's IoU is how much of it is *boundary*, not how rare it is. The
-decisive case: `barrier-structures` is **8.5× more common** than `living-thing` and scores
+decisive case: `barrier-structures` is **8.6× more common** than `living-thing` and scores
 about the same IoU. Rarity cannot explain that; thinness predicts it.
 
 Correlation was only the hypothesis — n = 7 classes, with the two predictors themselves
@@ -250,16 +258,23 @@ doubles the resolution of the features the decoder sees and changes nothing else
 | sky | 12% | +0.001 |
 | drivable | 7% | +0.001 |
 
-The two flattest classes gain +0.001; the boundary-heavy ones gain 10–26× that. **That is
-a controlled intervention, not a correlation.**
+The two flattest classes gain +0.001; the boundary-heavy ones gain 10–26× that, and every
+change except `drivable`'s falls outside the range four identical runs span. **That is a
+controlled intervention, not a correlation.**
 
-And `non-drivable` goes the wrong way — as it did under region losses, boundary-weighted
-loss, U-Net and FPN. **Six independent interventions improved `living-thing` and degraded
-`non-drivable`**; only explicit class re-weighting ever helped it. That splits one apparent
-failure mode into two: `living-thing` is a small compact object that wants resolution,
-while `non-drivable` is a thin strip abutting `drivable` (32% of all pixels) that gets
-absorbed by it — and every sharpening intervention makes the model *more* willing to call
-an ambiguous road edge "road".
+And `non-drivable` goes the wrong way. Per-class IoU is far noisier than mIoU — four runs
+with identical config *and* seed span 0.011 on `non-drivable` and 0.015 on `living-thing` —
+so each single-seed intervention is read against that range ([`RESULTS.md`](results/RESULTS.md)
+§1c, §3b). **`living-thing` improves beyond it under all six sharpening interventions**
+(Dice, Tversky, boundary-weighted loss, U-Net, FPN, stride 8; boundary-weighted loss only
+marginally). **`non-drivable` drops beyond it under three** — U-Net, stride 8 and, marginally,
+boundary-weighted loss — stays inside it under Dice, Tversky and FPN, and improves beyond it
+only under explicit class re-weighting. That still splits one apparent failure mode into
+two: `living-thing` is a small compact object that wants resolution, while `non-drivable` is
+a thin strip abutting `drivable` (32% of all pixels) that gets absorbed by it, and the two
+interventions that add the most effective resolution make that absorption worse. The
+evidence for that second half is three interventions, not the six an earlier version of
+this README claimed.
 
 All results are at IDD Lite scale on a single M1 Pro. This is a small dataset and the
 absolute mIoU values reflect that. The comparisons are controlled, so the *differences*
@@ -279,12 +294,17 @@ python3.11 -m venv .venv && .venv/bin/pip install -r requirements.txt
 # 3. Build the dataset variants
 PYTHONPATH=. .venv/bin/python -m data.prepare_masks --split-mode all
 
-# 4. Train a model (~30 min on an M1 Pro)
-PYTHONPATH=. .venv/bin/python -m modeling.train --data data/processed/level1_official
+# 4. Train one model with the recipe behind every reported run (~30 min on an M1 Pro)
+PYTHONPATH=. .venv/bin/python -m modeling.train --data data/processed/level1_official \
+    --epochs 30 --patience 8
 
-# 5. Or reproduce every table and figure (~7 h)
+# 5. Or reproduce every table and figure (~14 h)
 ./scripts/reproduce.sh
 ```
+
+On Kaggle's free GPUs, [`scripts/kaggle_stage.sh`](scripts/kaggle_stage.sh) runs the same
+pipeline in stages that each fit one session, spread across both GPUs; its header has the
+notebook cells.
 
 ### Serving and the demo
 
@@ -301,9 +321,10 @@ confidence layers.
 
 The right-hand column is where the reasoning is. **Drivable path** (§8) scores the forward
 corridor and shows the components that produced it — on this frame, 81.3% of the corridor
-predicted drivable at 98.0% mean confidence, against 18.7% blocked by the two vehicles
-ahead. That 18.7% is the whole reason the score sits at 0.649 rather than 0.80, and the
-breakdown is what makes the difference readable. **Prediction** carries the calibrated mean
+predicted drivable at 97.8% mean confidence, against 18.7% blocked by the two vehicles
+ahead. That 18.7% is the whole reason the score sits at 0.647 rather than 0.80, and the
+breakdown is what makes the difference readable. The road-edge caveat stays down: the model
+draws no road edge in or near this corridor, and ground truth puts none there either. **Prediction** carries the calibrated mean
 confidence and the temperature it was scaled by; **Class composition** gives per-class
 pixel share and confidence.
 
@@ -311,16 +332,18 @@ The **mask** layer drops the photograph entirely and shows the raw class map:
 
 ![Demo page on the mask layer: the predicted class map alone, flat colour per class, with no input image blended underneath](docs/images/demo_mask.png)
 
-Worth a look precisely because it is unflattering. With the photograph gone there is
-nothing left to lend the output plausibility, and the shape errors stand on their own. The
-vehicles hold clean silhouettes. But read the class table beside it: **`non-drivable` is
-0.0% of this frame.** A dirt road with an unpaved shoulder on both sides, and the model
-predicts not one pixel of it — the entire road edge has gone to `drivable` (purple) or
-`barrier-structures` (dusty rose).
+Worth a look because it is unflattering by design: with the photograph gone there is
+nothing left to lend the output plausibility, and shape errors stand on their own. The
+vehicles hold clean silhouettes. The class table shows `non-drivable` at 0.0% of the frame
+— a dirt road with an unpaved shoulder, and almost none of it called non-drivable.
 
-That is the absorption failure mode of §8, caught in the act. Not a degraded boundary: an
-*absent class*. The overlay hides it because the underlying photograph supplies the edge
-your eye expects; the flat mask has no such cover.
+An earlier version of this README called that the absorption failure mode of §8 caught in
+the act. Checked against ground truth, it is not: IDD's annotators labelled this shoulder
+drivable as well, putting only 0.3% of the frame in `non-drivable`, and the model's 37.3%
+drivable matches their 37.3%. On this road the edge is a judgement call, and the model
+makes the annotators' call. The absorption is real — about a fifth of true `non-drivable`
+across the validation set ([`RESULTS.md`](results/RESULTS.md) §9, §8d) — but this frame does
+not show it, which is why the claim rests on ground truth rather than on a screenshot.
 
 **The confidence view is the one worth looking at**, because it reproduces this project's
 per-class finding on a single frame, with no analysis:
@@ -329,9 +352,9 @@ per-class finding on a single frame, with no analysis:
 
 It renders as an **edge map**. Region interiors — road, sky, vegetation — are uniformly
 bright; every class boundary is dark. The model is least certain exactly where classes
-meet, which is the same effect the per-class table measures at r = −0.92 against boundary
+meet, which is the same effect the per-class table measures at r = −0.91 against boundary
 share. Read the class panel alongside it and the ordering repeats: on this frame the flat
-classes score 89–96% mean confidence while the thin ones fall to 40–68%.
+classes score 89–95% mean confidence while the thin ones fall to 40–66%.
 
 That is the whole argument of *It is not rarity. It is geometry.* above, visible without
 reading a number.
@@ -345,7 +368,7 @@ one page that did something the report could not — run the model — needed no
 ### Tests
 
 ```bash
-PYTHONPATH=. .venv/bin/python -m pytest tests/ -v      # 123 tests, no dataset required
+PYTHONPATH=. .venv/bin/python -m pytest tests/ -v      # 144 tests, no dataset required
 ```
 
 Tests needing the real IDD tree skip themselves, so CI runs green without a download.
@@ -362,8 +385,8 @@ compression/  ONNX export with parity check, INT8 PTQ, latency benchmarking
 serving/      FastAPI service (ONNX Runtime inference), drivable-path scoring
 serving/static/index.html   the demo page, dependency-free
 docs/images/  demo screenshots, regenerated by scripts/capture_demo.py
-scripts/      ablation drivers, reproduction, RESULTS.md generator
-tests/        123 tests incl. the anti-leakage assertion
+scripts/      ablation drivers, reproduction, RESULTS.md generator, Kaggle stage runner
+tests/        144 tests incl. the anti-leakage assertion
 ```
 
 ## Limitations
@@ -372,26 +395,52 @@ tests/        123 tests incl. the anti-leakage assertion
   full IDD 20K or Cityscapes, and is not claimed to be.
 - **Corruptions are synthetic.** The fog model is depth-independent because IDD Lite ships
   no depth map; real adverse-weather data would be a stronger test.
-- **No held-out test set.** IDD Lite ships test *images* but withholds their labels, so
-  validation does double duty: it is both the early-stopping criterion and the set every
-  number is reported on. Model selection has therefore seen the reporting set. The
-  calibration split (§5) is clean *within* validation — temperature is fitted and evaluated
-  on disjoint pixel halves — but it inherits this. Every figure here should be read as a
-  validation number, not a test number.
+- **One held-out test run.** IDD Lite withholds its test labels, so validation does double
+  duty — early-stopping criterion and reporting set — everywhere except one experiment
+  (`RESULTS.md` §5b), where a drive-disjoint test partition was carved from the labelled
+  frames. That measures early-stopping optimism for one run. It does not measure the
+  optimism of picking the best of many configurations on validation, which the headline
+  0.6979 carries. The calibration split (§5) is clean *within* validation — temperature is
+  fitted and evaluated on disjoint pixel halves — but inherits this. Read every other
+  figure as a validation number.
 - **Seed variance is measured for the headline, assumed elsewhere.** The split experiment
-  was run across three seeds per arm: drive-disjoint 0.6768 ± 0.0032, random-frame
-  0.6894 ± 0.0009, giving **+0.0126 mIoU at 3.9× the worst-arm spread** — so the leakage
-  effect clears its own noise floor. Every *other* ablation cell is still one seed, and
-  differences there smaller than ~0.003 should be read as unresolved. Separately, two runs
-  with identical config **and identical seed** differ by 0.0012 mIoU: MPS offers no
-  determinism guarantee and `cudnn.deterministic` is CUDA-only.
-- **The leaky split is also the more stable one** (std 0.0009 vs 0.0032). Contamination
-  does not only inflate the mean, it suppresses the variance — which is precisely why a
-  leaky benchmark feels more reliable while telling you less.
-- **Two of three recorded runs have `git_dirty=True`.** The run log stores a commit SHA per
-  row, but where the tree was dirty that SHA does not fully identify the code that ran.
+  was run across three seeds per arm (drive-disjoint 0.6768 ± 0.0032, random-frame
+  0.6894 ± 0.0009; inflation +0.0126, p = 0.016). Every *other* ablation cell is one seed.
+  Four runs with identical config **and identical seed** span 0.0022 mIoU — MPS offers no
+  determinism guarantee and `cudnn.deterministic` is CUDA-only — and their per-class IoU
+  spans up to 0.0145. Single-seed mIoU differences under ~0.003, and per-class differences
+  inside the ranges in `RESULTS.md` §1c, are unresolved.
+- **Most recorded runs have `git_dirty=True`** (`RESULTS.md`'s header gives the count). The
+  run log stores a commit SHA per row, but where the tree was dirty that SHA does not fully
+  identify the code that ran.
+- **The road-edge caveat's margin was chosen on validation**, the same frames its recall is
+  reported on, so that recall is optimistic; the margin sweep is published beside it.
 - **`train_seconds` is wall-clock, not compute.** Runs left going overnight include machine
   sleep, so that column is not a benchmark. Latency figures in the compression tables are
   measured properly, under pinned threads.
 - **Architecture comparison is decoder-only.** All arms share an encoder family and the same
   training recipe, so it does not speak to architectures with different training needs.
+
+## Corrections
+
+An audit of this README against the code, the run log and the data (November 2026) found
+claims that did not hold. The text above is corrected; this is what changed.
+
+- **Held-out test.** Its run had trained from random initialisation: the training command
+  turned an omitted `--encoder-weights` into none. Retrained with ImageNet weights it scores
+  val 0.6669 → test 0.6690, not 0.5782 → 0.5778. The accidental run is kept as a
+  pretraining comparison (+0.09 test mIoU for ImageNet).
+- **Distillation.** The standalone student trained at batch size 16, the distilled one at 8.
+  On one shared recipe the gain is +0.0010, not +0.0028, and inside run-to-run noise.
+- **Calibration.** Its pixels came from the first 56 of 204 validation frames. Sampled
+  uniformly: T = 1.304, not 1.240; severe motion blur is 15× the clean ECE, not 25×.
+- **Noise and per-class claims.** Four identical runs span 0.0022 mIoU (stated: 0.0012) and
+  up to 0.0145 per class. Against that, three interventions degrade `non-drivable`, not six,
+  and the leaky split's smaller seed spread is not significant.
+- **Road-edge caveat.** It could not fire when absorption was total; it now keys on the road
+  edge the model draws, and its recall is measured.
+- **Demo narrative.** The mask-layer screenshot was presented as absorption caught in the
+  act. Its ground truth has only 0.3% `non-drivable`, and the model agrees with it.
+- **Smaller.** Boundary IoU counted the image edge as boundary; the label-level range check
+  never ran in the dataset build; some report figures were hardcoded rather than read from
+  result files. Each fix has a regression test.

@@ -36,6 +36,10 @@ HERO_LAYERS = ("overlay", "confidence")
 #: Gap between hero panels, and the page background they sit on, in device pixels.
 HERO_GAP = 28
 HERO_BACKGROUND = (247, 248, 250)
+#: The validation frame the README's screenshots and prose describe. Named rather than
+#: picked by position, because a positional pick changes whenever the file list does --
+#: and the README's numbers describe this frame, not whichever one lands at an index.
+DEMO_FRAME = "119_903127.jpg"
 
 
 def _free_port() -> int:
@@ -183,15 +187,11 @@ def main() -> None:
     if args.image:
         image = Path(args.image)
     else:
-        candidates = sorted(
-            (REPO_ROOT / "data/processed/level1_official/images/val").glob("*.jpg")
-        )
-        if not candidates:
+        image = REPO_ROOT / "data/processed/level1_official/images/val" / DEMO_FRAME
+        if not image.exists():
             raise SystemExit(
-                "No validation frames found. Run: python -m data.prepare_masks"
+                f"{image.name} not found. Run: python -m data.prepare_masks, or pass --image"
             )
-        # A mid-split frame rather than the first, which tends to be an outlier scene.
-        image = candidates[len(candidates) // 3]
 
     print(f"capturing {image.name}")
     written = capture(image, REPO_ROOT / args.out_dir, args.width, args.height)

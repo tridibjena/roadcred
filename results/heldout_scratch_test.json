@@ -1,0 +1,105 @@
+{
+  "checkpoint": "checkpoints/heldout_sequence3_scratch_s0.pt",
+  "architecture": "deeplabv3plus",
+  "encoder": "resnet34",
+  "encoder_output_stride": null,
+  "data": "level1_sequence3",
+  "split": "test",
+  "tta": false,
+  "n_images": 242,
+  "params": 22438999,
+  "miou": 0.5777939972031191,
+  "pixel_acc": 0.8455866018674449,
+  "mean_acc": 0.6732790116850718,
+  "fw_iou": 0.7562913186050715,
+  "iou/drivable": 0.9088834412584095,
+  "iou/non-drivable": 0.24645620977234592,
+  "iou/living-thing": 0.28257515296621444,
+  "iou/vehicles": 0.599975946097391,
+  "iou/barrier-structures": 0.35739068311639216,
+  "iou/construction-vegetation": 0.7202318447336105,
+  "iou/sky": 0.9290447024774705,
+  "boundary_miou": 0.14856140638031315,
+  "boundary_iou/drivable": 0.19559097643459053,
+  "boundary_iou/non-drivable": 0.04608883149826652,
+  "boundary_iou/living-thing": 0.06126568666448833,
+  "boundary_iou/vehicles": 0.1533114702012672,
+  "boundary_iou/barrier-structures": 0.10057560035752065,
+  "boundary_iou/construction-vegetation": 0.16551060340504736,
+  "boundary_iou/sky": 0.31758667610101143,
+  "boundary_gap": 0.42923259082280596,
+  "confusion_matrix": [
+    [
+      5336660,
+      31411,
+      6595,
+      77537,
+      150095,
+      5834,
+      2
+    ],
+    [
+      98813,
+      118089,
+      1432,
+      7177,
+      140372,
+      29401,
+      0
+    ],
+    [
+      12834,
+      351,
+      100909,
+      109248,
+      51834,
+      15482,
+      283
+    ],
+    [
+      57660,
+      299,
+      40642,
+      1097491,
+      166481,
+      91179,
+      1219
+    ],
+    [
+      82002,
+      31927,
+      11477,
+      102740,
+      1004013,
+      576384,
+      54599
+    ],
+    [
+      11358,
+      19578,
+      6018,
+      75817,
+      407928,
+      3626932,
+      73785
+    ],
+    [
+      865,
+      298,
+      0,
+      1735,
+      29435,
+      96088,
+      3382138
+    ]
+  ],
+  "class_names": [
+    "drivable",
+    "non-drivable",
+    "living-thing",
+    "vehicles",
+    "barrier-structures",
+    "construction-vegetation",
+    "sky"
+  ]
+}

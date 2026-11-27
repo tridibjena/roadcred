@@ -31,8 +31,8 @@ robustness under distribution shift, and CPU deployment of a segmentation model.
 ## Out-of-scope use
 
 **This model must not be used for vehicle control, driver assistance, navigation, or any
-safety-relevant decision.** It is trained on 1403 low-resolution frames, has an IoU of well
-under 0.5 on its rarest classes, and has never been validated against any safety standard.
+safety-relevant decision.** It is trained on 1403 low-resolution frames, has an IoU of 0.44–0.52
+on its two rarest classes, and has never been validated against any safety standard.
 The `living-thing` class in particular — the one whose errors would matter most — is the
 weakest, at roughly 1.3% of training pixels.
 
@@ -49,9 +49,11 @@ something else occupies. It describes the segmentation, not the road, and naming
 every component is returned alongside the score, because a corridor scoring low from
 uncertainty and one scoring low from an obstruction are different situations a single
 number cannot distinguish; and the response carries a `road_edge_caveat` flag whenever the
-corridor spans a drivable/non-drivable border, because this model absorbs 17–20% of true
-`non-drivable` into `drivable` and the score is therefore **optimistic at exactly the
-boundary that matters most** (see *Known failure modes*).
+model draws a road edge in or near the corridor, because this model absorbs about 20% of
+true `non-drivable` into `drivable` at road edges, making the score **optimistic at exactly
+the boundary that matters most** (see *Known failure modes*). On validation the flag fired
+on every frame where that absorption reached inside the corridor (22 of 22), and on half of
+all frames: it is built to over-warn rather than stay silent.
 
 ## Training data
 
@@ -78,21 +80,25 @@ which classes fail.
 - **Metrics** come from a single confusion matrix accumulated over the whole split. Classes
   absent from the ground truth are `NaN`, not zero. Boundary IoU is reported alongside
   region IoU.
-- **A genuinely held-out test set exists.** IDD withholds its own test labels, so a third
-  partition was carved from the labelled frames, drive-disjoint from *both* train and
-  validation — a test set sharing drives with validation is contaminated through model
-  selection just as surely as through training. On that split: **val 0.5782, test 0.5778,
-  selection optimism +0.0004.** Early stopping bought itself essentially nothing, which is
-  the evidence that the validation figures elsewhere are honest generalization estimates.
-  (Absolute mIoU is lower there because holding out two partitions leaves ~940 training
-  frames instead of 1403.)
-- **Calibration** is fitted on one half of the validation pixels and reported on the other.
+- **A genuinely held-out test set exists, for one run.** IDD withholds its own test labels,
+  so a third partition was carved from the labelled frames, drive-disjoint from *both* train
+  and validation — a test set sharing drives with validation is contaminated through model
+  selection just as surely as through training. On that split: **val 0.6669, test 0.6690.**
+  Early stopping bought no measurable optimism; the −0.0021 difference is within run-to-run
+  noise, and the two sets hold different drives. That covers early stopping only: it does
+  not measure the optimism of picking the best of many configurations on validation, which
+  the headline 0.6979 carries. (Holding out two partitions leaves 1124 training frames
+  instead of 1403. An earlier run of this experiment trained from random initialisation
+  through a command-line bug, since fixed; it scored 0.5778 on test, so ImageNet
+  initialisation is worth about +0.09 mIoU here.)
+- **Calibration** is fitted on one half of the validation pixels and reported on the other;
+  the pixels are drawn uniformly from every validation frame.
 - **Robustness** uses test-time corruptions that never appear in training augmentation, and
   is additionally measured *for the confidence score*, not only for accuracy.
-- **Run-to-run noise is measured, not assumed.** Two runs with identical configuration and
-  identical seed differ by **0.0012 mIoU** — MPS provides no determinism guarantee, and
-  `torch.backends.cudnn.deterministic` is CUDA-only. Any difference below roughly that
-  magnitude is not interpretable. Seed variance is larger again: **±0.0032** across three
+- **Run-to-run noise is measured, not assumed.** Four runs with identical configuration and
+  identical seed span **0.0022 mIoU**, and up to **0.0145** IoU on a single class — MPS
+  provides no determinism guarantee, and `torch.backends.cudnn.deterministic` is CUDA-only.
+  Any difference inside those ranges is not interpretable. Seed variance is larger again: **±0.0032** across three
   seeds on the drive-disjoint split.
 - **Reproducibility:** each run logs its config, seed and git SHA to `results/runs.csv`.
 
@@ -104,7 +110,8 @@ which classes fail.
   depth map, so it under-represents real fog, which attenuates with distance.
 - Most ablation cells are one seed, for compute reasons; the split experiment is the
   exception and was run across three seeds. Differences smaller than ~0.003 mIoU elsewhere
-  in this project should be read as unresolved rather than real.
+  in this project, and per-class differences inside the identical-run ranges in
+  `results/RESULTS.md` §1c, should be read as unresolved rather than real.
 - The architecture comparison varies the decoder within one training recipe, so it says
   nothing about architectures needing different recipes.
 - Ground truth is treated as correct. No annotation-noise audit was performed.
@@ -113,30 +120,35 @@ which classes fail.
 
 Per-class IoU on this model does not track class *rarity* so much as class *geometry*. The
 share of a class's pixels lying within 2px of a class boundary predicts its IoU better than
-its frequency does, and the decisive case is `barrier-structures`: 8.5x more common than
+its frequency does, and the decisive case is `barrier-structures`: 8.6x more common than
 `living-thing` and scoring about the same. Halving the encoder stride — changing nothing
 else — improved the boundary-heavy classes by +0.018 to +0.026 and the two flattest classes
-by +0.001, which is the controlled confirmation.
+by +0.001, which is the controlled confirmation; every class but `drivable` moved outside
+the range four identical runs span.
 
 Within that, two distinct failure modes were separated by the ablations:
 
 - **`living-thing`** is a small compact object (mean connected component ~157 px). It
   responds to anything that adds effective resolution — region losses, U-Net skip
-  connections, stride 8 — gaining +0.018 to +0.046 depending on the intervention.
+  connections, stride 8 — gaining +0.025 to +0.038 over the mean of four identical baseline
+  runs, well outside their 0.015 spread.
 - **`non-drivable`** is a thin strip abutting `drivable`, which is 32% of all pixels, and
-  ~17-20% of it is absorbed into that neighbour. **Six independent interventions improved
-  `living-thing` and made `non-drivable` worse**; only explicit class re-weighting helped
-  it. Sharper, more confident models are *more* willing to call an ambiguous road edge
-  "road". This is competitive absorption by a dominant adjacent class, not a resolution
-  limit, and it is the failure mode closest to mattering for a drivable-area system.
+  about 20% of it is absorbed into that neighbour. Against the identical-run range, U-Net
+  (−0.022) and stride 8 (−0.016) make it clearly worse and boundary-weighted loss
+  marginally; Dice, Tversky and FPN leave it inside the noise; only explicit class
+  re-weighting improves it beyond the noise. The interventions that add the most effective
+  resolution make the model *more* willing to call an ambiguous road edge "road". This looks
+  like competitive absorption by a dominant adjacent class rather than a resolution limit,
+  and it is the failure mode closest to mattering for a drivable-area system.
 
 **The confidence score degrades under distribution shift, and unevenly.** Temperature is
 fitted on clean validation data, which is all a deployed model can do. Carrying that
-temperature onto corrupted data, expected calibration error rises from 0.0026 clean to
-0.0646 under severe motion blur — **25x** — while accuracy falls only to 0.82. The model
-becomes wrong while staying confident, which is the failure a confidence score exists to
-prevent. Test-time BatchNorm adaptation is not a general fix: it improves calibration under
-motion blur (0.0646 to 0.0176) and *worsens* it under rain (0.0263 to 0.0432) while
+temperature onto corrupted data, expected calibration error rises from 0.0041 clean to
+0.0600 under severe motion blur — **15x** — while accuracy falls only to 0.82, and to 0.1350
+(**33x**) under severe Gaussian noise. The model becomes wrong while staying confident,
+which is the failure a confidence score exists to prevent. Test-time BatchNorm adaptation
+is not a general fix: it improves calibration under motion blur (0.0600 to 0.0203) and
+Gaussian noise (0.1350 to 0.0233), and *worsens* it under rain (0.0139 to 0.0390) while
 improving rain accuracy. Accuracy recovery and calibration recovery are separate outcomes.
 
 ## Ethical considerations

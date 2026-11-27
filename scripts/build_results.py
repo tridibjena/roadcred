@@ -604,8 +604,8 @@ def section_heldout() -> str:
         out += [
             f"Validation minus test: **{drop:+.4f} mIoU**, from one run. It measures what early "
             "stopping bought itself on the validation set, plus the difference between two "
-            "different sets of drives; it does not measure the optimism of choosing the best "
-            "of many configurations on validation, which every other section does.",
+            "different sets of drives. It does not measure the optimism of choosing the best "
+            "of many configurations on validation, which the headline numbers carry.",
             "",
         ]
     if test.get("boundary_miou") and test.get("miou"):
@@ -906,7 +906,8 @@ def section_pareto() -> str:
     for row in rows:
         row["_pareto"] = "yes" if (row["variant"], row["precision"]) in frontier else ""
         row["_miou"] = fmt(row.get("miou"))
-    return "\n".join([
+    noise = band(baseline_group(read_csv("runs")) or [], "miou")
+    out = [
         "## 8c. Deployment Pareto",
         "",
         "Every variant at both precisions, benchmarked identically. A configuration is",
@@ -917,9 +918,15 @@ def section_pareto() -> str:
                      ("latency_ms_mean", "latency ms"), ("latency_ms_p95", "p95 ms"),
                      ("size_mb", "size MB"), ("_pareto", "Pareto-optimal")], 2),
         "",
-        "![compression Pareto](figures/compression_pareto.png)",
-        "",
-    ])
+    ]
+    if noise:
+        out += [
+            f"Dominance between variants whose mIoU differs by less than {noise[1] - noise[0]:.4f}",
+            "— the spread of identical runs (§1c) — is decided by noise, not by the variants.",
+            "",
+        ]
+    out += ["![compression Pareto](figures/compression_pareto.png)", ""]
+    return "\n".join(out)
 
 
 def section_caveat() -> str:

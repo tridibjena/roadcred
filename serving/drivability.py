@@ -96,7 +96,7 @@ def _boundary_fraction(prediction: np.ndarray, region: np.ndarray) -> float:
     """Share of the region whose predicted class differs from a 4-neighbour.
 
     Boundary pixels are where this model is least reliable -- per-class IoU correlates at
-    r = -0.92 with a class's boundary share -- so a corridor made mostly of boundary is a
+    r = -0.91 with a class's boundary share -- so a corridor made mostly of boundary is a
     corridor whose score should be trusted less.
     """
     if not region.any():
