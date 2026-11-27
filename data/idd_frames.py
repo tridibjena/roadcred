@@ -13,7 +13,14 @@ from pathlib import Path
 
 import numpy as np
 
-from data.label_utils import build_lut, detect_level, polygons_to_mask, remap_mask
+from data.label_utils import (
+    IGNORE_INDEX,
+    build_lut,
+    check_level_plausible,
+    detect_level,
+    polygons_to_mask,
+    remap_mask,
+)
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png"}
 
@@ -129,8 +136,6 @@ def read_mask(
     Returns:
         ``uint8`` mask of class indices, 255 = ignore.
     """
-    import cv2
-
     if frame.label.suffix == ".json":
         mask = polygons_to_mask(json.loads(frame.label.read_text()))
         if target == "binary":
@@ -138,18 +143,53 @@ def read_mask(
             mask = binary_lut[mask]
         return mask
 
-    raw = cv2.imread(str(frame.label), cv2.IMREAD_UNCHANGED)
-    if raw is None:
-        raise OSError(f"Could not read label {frame.label}")
-    if raw.ndim == 3:
-        raw = raw[..., 0]
+    raw = _read_raw_label(frame)
     level = detect_level(frame.label)
     if lut_cache is None:
         return remap_mask(raw, level=level, target=target)
     cache_key = f"{level}:{target}"
     if cache_key not in lut_cache:
         lut_cache[cache_key] = build_lut(level, target)
-    return remap_mask(raw, lut=lut_cache[cache_key])
+    return remap_mask(raw, level=level, lut=lut_cache[cache_key])
 
 
-__all__ = ["FramePaths", "discover_frames", "read_mask", "find_dataset_root", "IMAGE_SUFFIXES"]
+def _read_raw_label(frame: FramePaths) -> np.ndarray:
+    import cv2
+
+    raw = cv2.imread(str(frame.label), cv2.IMREAD_UNCHANGED)
+    if raw is None:
+        raise OSError(f"Could not read label {frame.label}")
+    return raw[..., 0] if raw.ndim == 3 else raw
+
+
+def audit_label_levels(frames: Sequence[FramePaths]) -> dict[str, int]:
+    """Check, before anything is written, that every rendered mask set has a plausible level.
+
+    Reads each rendered label once and records the largest raw ID per detected level, then
+    applies :func:`data.label_utils.check_level_plausible`, which raises if masks read as a
+    fine encoding never leave the level-1 range.
+
+    Returns:
+        Largest raw ID observed per detected level.
+    """
+    max_raw: dict[str, int] = {}
+    for frame in frames:
+        if frame.label.suffix == ".json":
+            continue  # polygons are rasterised by class name; no ID level involved
+        raw = _read_raw_label(frame)
+        observed = raw[raw != IGNORE_INDEX]
+        level = detect_level(frame.label)
+        max_raw[level] = max(max_raw.get(level, 0), int(observed.max()) if observed.size else 0)
+    for level, max_id in max_raw.items():
+        check_level_plausible(level, max_id)
+    return max_raw
+
+
+__all__ = [
+    "FramePaths",
+    "discover_frames",
+    "read_mask",
+    "audit_label_levels",
+    "find_dataset_root",
+    "IMAGE_SUFFIXES",
+]

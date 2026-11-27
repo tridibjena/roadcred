@@ -6,7 +6,8 @@ even at a good mIoU. The natural way to measure that is frame-to-frame flicker o
 
 **IDD Lite cannot support that measurement.** Its frames are grouped by drive sequence,
 but frames within a drive are not temporally adjacent: the median gap between consecutive
-frames of a drive is ~4,400 frame indices, and only 0.5% of gaps are within 30 frames.
+frames of a drive is ~4,200 frame indices, and only 0.4% of gaps are within 30 frames
+(measured by ``data.sequence_split.frame_gap_stats``; see ``results/dataset_stats.json``).
 Treating them as consecutive would produce a "flicker" number that is really just scene
 change.
 

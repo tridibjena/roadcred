@@ -14,7 +14,6 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -25,10 +24,15 @@ from torch.utils.data import DataLoader
 
 from evaluation.metrics import ConfusionMatrix
 from modeling.architectures import build_model, count_parameters
-from modeling.config import resolve_device, set_seed
+from modeling.config import TrainConfig, resolve_device, set_seed
 from modeling.dataset import build_loaders, training_class_counts
 from modeling.losses import compute_class_weights, make_loss
 from modeling.tracking import TensorBoard, log_run
+
+#: The single source of every training default. :func:`train`, the command line and a
+#: YAML config all start from these values, so no entry point can quietly disagree with
+#: another about a setting nobody specified.
+DEFAULTS = TrainConfig()
 
 
 def cosine_schedule(
@@ -126,29 +130,29 @@ def train_one_epoch(
 def train(
     data_root: str | Path,
     *,
-    architecture: str = "deeplabv3plus",
-    encoder: str = "resnet34",
-    encoder_weights: str | None = "imagenet",
-    encoder_output_stride: int | None = None,
-    loss: str = "ce",
-    epochs: int = 40,
-    batch_size: int = 16,
-    imgsz: tuple[int, int] = (224, 320),
-    lr: float = 3e-4,
-    weight_decay: float = 1e-4,
-    seed: int = 0,
-    device: str = "auto",
-    workers: int = 0,
-    patience: int = 12,
-    warmup_frac: float = 0.05,
-    grad_clip: float = 1.0,
+    architecture: str = DEFAULTS.architecture,
+    encoder: str = DEFAULTS.encoder,
+    encoder_weights: str | None = DEFAULTS.encoder_weights,
+    encoder_output_stride: int | None = DEFAULTS.encoder_output_stride,
+    loss: str = DEFAULTS.loss,
+    epochs: int = DEFAULTS.epochs,
+    batch_size: int = DEFAULTS.batch_size,
+    imgsz: tuple[int, int] = DEFAULTS.imgsz,
+    lr: float = DEFAULTS.lr,
+    weight_decay: float = DEFAULTS.weight_decay,
+    seed: int = DEFAULTS.seed,
+    device: str = DEFAULTS.device,
+    workers: int = DEFAULTS.workers,
+    patience: int = DEFAULTS.patience,
+    warmup_frac: float = DEFAULTS.warmup_frac,
+    grad_clip: float = DEFAULTS.grad_clip,
     class_names: list[str] | None = None,
     out_dir: str | Path = "checkpoints",
     run_name: str | None = None,
     tensorboard: bool = True,
     results_csv: str | Path = "results/runs.csv",
-    tversky_beta: float = 0.7,
-    loss_alpha: float = 0.5,
+    tversky_beta: float = DEFAULTS.tversky_beta,
+    loss_alpha: float = DEFAULTS.loss_alpha,
     verbose: bool = True,
 ) -> dict[str, Any]:
     """Train one model and return its best validation metrics.
@@ -316,8 +320,16 @@ def _default_class_names(data_root: Path) -> list[str]:
     return list(LEVEL1_NAMES)
 
 
-def main() -> None:
-    """CLI entry point."""
+#: Hyperparameters the command line can set; each name is a :class:`TrainConfig` field.
+CLI_FIELDS = (
+    "architecture", "encoder", "encoder_weights", "encoder_output_stride", "loss", "epochs",
+    "batch_size", "imgsz", "lr", "weight_decay", "seed", "device", "workers", "patience",
+)
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse the command line. Hyperparameter flags default to ``None``, meaning "not
+    given", so :func:`resolve_settings` can tell a typed value from an absent one."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--config",
@@ -325,72 +337,69 @@ def main() -> None:
         help="YAML config supplying defaults; any flag given explicitly overrides it",
     )
     parser.add_argument("--data", default="data/processed/level1_official")
-    parser.add_argument("--arch", default="deeplabv3plus")
-    parser.add_argument("--encoder", default="resnet34")
-    parser.add_argument("--encoder-weights", default="imagenet")
+    parser.add_argument("--arch", dest="architecture", default=None)
+    parser.add_argument("--encoder", default=None)
+    parser.add_argument(
+        "--encoder-weights", default=None, help="imagenet (default), or none for random init"
+    )
     parser.add_argument(
         "--encoder-output-stride", type=int, default=None, choices=[8, 16],
         help="8 doubles decoder-visible feature resolution at ~2x compute",
     )
-    parser.add_argument("--loss", default="ce")
-    parser.add_argument("--epochs", type=int, default=40)
-    parser.add_argument("--batch-size", type=int, default=16)
-    parser.add_argument("--imgsz", default="224x320")
-    parser.add_argument("--lr", type=float, default=3e-4)
-    parser.add_argument("--weight-decay", type=float, default=1e-4)
-    parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--device", default="auto")
-    parser.add_argument("--workers", type=int, default=0)
-    parser.add_argument("--patience", type=int, default=12)
+    parser.add_argument("--loss", default=None)
+    parser.add_argument("--epochs", type=int, default=None)
+    parser.add_argument("--batch-size", type=int, default=None)
+    parser.add_argument("--imgsz", default=None, help="HEIGHTxWIDTH, e.g. 224x320")
+    parser.add_argument("--lr", type=float, default=None)
+    parser.add_argument("--weight-decay", type=float, default=None)
+    parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--device", default=None)
+    parser.add_argument("--workers", type=int, default=None)
+    parser.add_argument("--patience", type=int, default=None)
     parser.add_argument("--run-name", default=None)
     parser.add_argument("--no-tensorboard", action="store_true")
-    args = parser.parse_args()
+    return parser.parse_args(argv)
 
-    # Config supplies defaults; anything the user typed on the command line wins. Only
-    # flags actually present in argv override, so a config value is never silently
-    # replaced by an argparse default the user never asked for.
+
+def resolve_settings(args: argparse.Namespace) -> dict[str, Any]:
+    """Layer the training settings: :class:`TrainConfig` defaults, then the ``--config``
+    file, then every flag given explicitly.
+
+    The result always holds every field, so nothing falls through to an implicit value.
+    That is the regression this guards: an earlier version built the dict incrementally,
+    kept only explicitly typed flags once it was non-empty, and so turned an omitted
+    ``--encoder-weights`` into ``None`` -- training from random initialisation while every
+    log and document said ImageNet.
+    """
     from dataclasses import asdict
 
     from modeling.config import load_config
 
-    settings = asdict(load_config(args.config).train) if args.config else {}
-    supplied = {a.lstrip("-").replace("-", "_") for a in sys.argv[1:] if a.startswith("--")}
-    cli = {
-        "architecture": args.arch,
-        "encoder": args.encoder,
-        "encoder_weights": args.encoder_weights,
-        "encoder_output_stride": args.encoder_output_stride,
-        "loss": args.loss,
-        "epochs": args.epochs,
-        "batch_size": args.batch_size,
-        "imgsz": args.imgsz,
-        "lr": args.lr,
-        "weight_decay": args.weight_decay,
-        "seed": args.seed,
-        "device": args.device,
-        "workers": args.workers,
-        "patience": args.patience,
-    }
-    alias = {"architecture": "arch", "batch_size": "batch_size"}
-    for key, value in cli.items():
-        if not settings or alias.get(key, key) in supplied:
+    settings = asdict(load_config(args.config).train)
+    for key in CLI_FIELDS:
+        value = getattr(args, key)
+        if value is not None:
             settings[key] = value
 
-    imgsz = settings.get("imgsz", (224, 320))
+    imgsz = settings["imgsz"]
     if isinstance(imgsz, str):
         imgsz = tuple(int(v) for v in imgsz.lower().split("x"))
     settings["imgsz"] = tuple(imgsz)
 
-    weights = settings.get("encoder_weights")
+    weights = settings["encoder_weights"]
     if isinstance(weights, str) and weights.lower() in {"none", "null", ""}:
-        weights = None
-    settings["encoder_weights"] = weights
+        settings["encoder_weights"] = None
+    return settings
 
+
+def main(argv: list[str] | None = None) -> None:
+    """CLI entry point."""
+    args = parse_args(argv)
     result = train(
         args.data,
         run_name=args.run_name,
         tensorboard=not args.no_tensorboard,
-        **settings,
+        **resolve_settings(args),
     )
     print(json.dumps(dict(result), indent=2, default=str))
 

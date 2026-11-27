@@ -123,6 +123,9 @@ def evaluate_checkpoint(
 
     result: dict[str, Any] = {
         "checkpoint": str(checkpoint),
+        "architecture": payload.get("architecture"),
+        "encoder": payload.get("encoder"),
+        "encoder_output_stride": payload.get("encoder_output_stride"),
         "data": Path(data_root).name,
         "split": split,
         "tta": tta,

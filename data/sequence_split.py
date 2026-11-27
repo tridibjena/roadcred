@@ -207,7 +207,42 @@ def leakage_report(splits: SplitMap) -> dict[str, int | float | list[str]]:
     return report
 
 
+def frame_gap_stats(frames: Iterable[FramePaths], near: int = 30) -> dict[str, float | int]:
+    """How far apart consecutive frames of one drive are, in frame indices.
+
+    This decides what a drive-level correlation can mean. If frames within a drive were
+    seconds apart, leakage through shared drives would hand validation near-duplicates
+    and temporal flicker would be measurable. Large gaps mean neither holds.
+
+    Args:
+        frames: Frames to measure; the frame index is the digits of each frame id.
+        near: Gap, in frame indices, counted as "near-consecutive".
+
+    Returns:
+        Number of gaps measured, the median gap, and the share of gaps within ``near``.
+    """
+    import re
+    import statistics
+
+    gaps: list[int] = []
+    for drive_frames in group_by_drive(frames).values():
+        indices = sorted(
+            int(digits)
+            for f in drive_frames
+            if (digits := re.sub(r"\D", "", f.frame_id))
+        )
+        gaps += [b - a for a, b in zip(indices, indices[1:], strict=False)]
+    if not gaps:
+        return {"n_gaps": 0, "median_gap": 0, f"share_within_{near}": 0.0}
+    return {
+        "n_gaps": len(gaps),
+        "median_gap": statistics.median(gaps),
+        f"share_within_{near}": sum(g <= near for g in gaps) / len(gaps),
+    }
+
+
 __all__ = [
+    "frame_gap_stats",
     "group_by_drive",
     "official_split",
     "sequence_split",

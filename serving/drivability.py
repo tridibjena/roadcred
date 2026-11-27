@@ -12,12 +12,17 @@ alongside the score rather than collapsed into it, so a reader can see *why* a f
 what it did -- and a low score caused by low confidence means something entirely different
 from one caused by an obstruction.
 
-**The known failure mode is surfaced deliberately.** This project measured that 17-20% of
+**The known failure mode is surfaced deliberately.** This project measured that ~20% of
 true `non-drivable` pixels -- sidewalk, shoulder, the road edge -- are absorbed into
-`drivable`, and that six independent interventions failed to fix it. The score is therefore
-*optimistic at exactly the boundary that matters most*, and
-:func:`drivability` reports the share of the corridor sitting near a predicted class border
-so that optimism is visible rather than hidden.
+`drivable`, and of the interventions tried, only class re-weighting improved that beyond
+run-to-run noise. Wherever that
+absorption lands inside the corridor the score is optimistic, so :func:`drivability` raises
+``road_edge_caveat`` whenever the model draws a road edge in or near the corridor.
+
+The flag is keyed to *where the model puts the road edge*, not to whether it predicts any
+non-drivable. An earlier version fired only when the corridor held predicted non-drivable,
+which is silent exactly when absorption is total. ``evaluation/road_edge_caveat.py``
+measures both rules against ground truth.
 """
 
 from __future__ import annotations
@@ -31,9 +36,26 @@ DRIVABLE = 0
 NON_DRIVABLE = 1
 LIVING_THING = 2
 VEHICLES = 3
+BARRIER_STRUCTURES = 4
+CONSTRUCTION_VEGETATION = 5
+SKY = 6
 
 #: Classes that physically block a path the vehicle would otherwise take.
 OBSTRUCTING = (LIVING_THING, VEHICLES)
+
+#: Classes whose border with predicted drivable is a *road edge* -- where the road ends,
+#: as opposed to where something stands on it. True non-drivable is absorbed into
+#: drivable at exactly these borders, so wherever the model draws one, the true edge can
+#: lie on the drivable side of it.
+ROAD_EDGE_CLASSES = (NON_DRIVABLE, BARRIER_STRUCTURES, CONSTRUCTION_VEGETATION, SKY)
+
+#: How near the corridor a predicted road edge must be to raise the caveat, as a fraction
+#: of image width (3 px at IDD Lite's 320). An edge drawn just outside the corridor still
+#: leaves the absorbed strip inside it. On validation, 2 px was the smallest margin that
+#: flagged every frame with in-corridor absorption; one more pixel is kept as headroom,
+#: because the margin was chosen on the same frames its recall is reported on. The sweep
+#: is in results/road_edge_caveat.json (evaluation/road_edge_caveat.py).
+ROAD_EDGE_MARGIN = 0.01
 
 #: Forward-corridor trapezoid, as fractions of image width/height. Wide at the bottom of
 #: the frame (near the vehicle) and narrow further up (further away), which is the shape a
@@ -87,6 +109,23 @@ def _boundary_fraction(prediction: np.ndarray, region: np.ndarray) -> float:
     return float(differs[region].mean())
 
 
+def road_edge_near_corridor(prediction: np.ndarray, region: np.ndarray, margin_px: int) -> bool:
+    """Whether a predicted road edge lies inside the corridor or within ``margin_px`` of it.
+
+    A road-edge pixel is a predicted-drivable pixel 8-adjacent to a pixel of
+    :data:`ROAD_EDGE_CLASSES`.
+    """
+    import cv2
+
+    kernel = np.ones((3, 3), dtype=np.uint8)
+    edge_class = np.isin(prediction, ROAD_EDGE_CLASSES).astype(np.uint8)
+    road_edge = cv2.dilate(edge_class, kernel).astype(bool) & (prediction == DRIVABLE)
+    near = region
+    if margin_px > 0:
+        near = cv2.dilate(region.astype(np.uint8), kernel, iterations=margin_px).astype(bool)
+    return bool((road_edge & near).any())
+
+
 def drivability(
     prediction: np.ndarray,
     confidence: np.ndarray,
@@ -132,6 +171,7 @@ def drivability(
     obstruction = float(np.isin(in_corridor, OBSTRUCTING).mean())
 
     score = coverage * mean_confidence * (1.0 - obstruction)
+    margin_px = max(1, round(ROAD_EDGE_MARGIN * prediction.shape[1]))
     return {
         "score": score,
         "coverage": coverage,
@@ -140,12 +180,21 @@ def drivability(
         "boundary_fraction": _boundary_fraction(prediction, region),
         "low_confidence": float((corridor_confidence < low_confidence_threshold).mean()),
         "corridor_pixels": area,
-        # True whenever the corridor touches a predicted drivable/non-drivable border --
-        # the one transition this model is measurably optimistic about.
-        "road_edge_caveat": bool(
-            (in_corridor == DRIVABLE).any() and (in_corridor == NON_DRIVABLE).any()
-        ),
+        # True whenever the model draws a road edge in or near the corridor -- the border
+        # at which it absorbs true non-drivable into drivable, so the score may count
+        # shoulder or sidewalk as road. Keyed to the edge, not to predicted non-drivable,
+        # so total absorption cannot silence it.
+        "road_edge_caveat": road_edge_near_corridor(prediction, region, margin_px),
     }
 
 
-__all__ = ["drivability", "corridor_mask", "DRIVABLE", "NON_DRIVABLE", "OBSTRUCTING"]
+__all__ = [
+    "drivability",
+    "corridor_mask",
+    "road_edge_near_corridor",
+    "DRIVABLE",
+    "NON_DRIVABLE",
+    "OBSTRUCTING",
+    "ROAD_EDGE_CLASSES",
+    "ROAD_EDGE_MARGIN",
+]

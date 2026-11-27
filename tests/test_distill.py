@@ -108,3 +108,49 @@ def test_pareto_frontier_keeps_a_single_point():
 
     rows = [{"variant": "only", "precision": "fp32", "latency_ms_mean": 10, "miou": 0.5}]
     assert pareto_frontier(rows) == rows
+
+
+def test_comparison_arms_receive_identical_settings(monkeypatch, tmp_path):
+    """Regression: the standalone student once trained at batch size 16 against the
+    distilled student's 8, because each arm fell back to its own function's default."""
+    import compression.distill as distill_module
+    import evaluation.eval
+    import modeling.train
+
+    calls: dict[str, dict] = {}
+
+    def fake_train(data_root, **kwargs):
+        calls["alone"] = kwargs
+        return {"miou": 0.60, "params": 1, "checkpoint": "alone.pt"}
+
+    def fake_distill(data_root, teacher, **kwargs):
+        calls["distilled"] = kwargs
+        return {"miou": 0.61, "params": 1, "checkpoint": "distilled.pt"}
+
+    monkeypatch.setattr(
+        evaluation.eval, "evaluate_checkpoint",
+        lambda *a, **k: {"miou": 0.70, "params": 3, "architecture": "deeplabv3plus",
+                         "encoder": "resnet34"},
+    )
+    monkeypatch.setattr(modeling.train, "train", fake_train)
+    monkeypatch.setattr(distill_module, "distill", fake_distill)
+
+    rows = distill_module.run_comparison("data", "teacher.pt", out_csv=tmp_path / "d.csv")
+
+    alone = {k: v for k, v in calls["alone"].items() if k != "run_name"}
+    distilled = {k: v for k, v in calls["distilled"].items() if k != "run_name"}
+    assert alone == distilled
+    assert alone["batch_size"] == distill_module.RECIPE_BATCH_SIZE
+    assert rows[-1]["gain_over_alone"] == pytest.approx(0.01)
+
+
+def test_both_arms_accept_the_full_comparison_recipe():
+    import inspect
+
+    from compression.distill import comparison_recipe, distill
+    from modeling.train import train
+
+    recipe = comparison_recipe()
+    for function in (train, distill):
+        accepted = set(inspect.signature(function).parameters)
+        assert set(recipe) <= accepted, f"{function.__name__} rejects {set(recipe) - accepted}"

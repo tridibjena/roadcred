@@ -122,40 +122,53 @@ def collect_predictions(
     max_pixels: int = 4_000_000,
     seed: int = 0,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Gather logits and targets over a loader, subsampling pixels.
+    """Gather logits and targets over a loader, subsampling pixels uniformly.
 
-    A full validation split is hundreds of millions of pixels; calibration statistics
-    converge long before that. Pixels are subsampled uniformly at random with a fixed
-    seed so the estimate is reproducible and unbiased.
+    A validation split is ~15 million labelled pixels at 320x224; calibration statistics
+    converge long before that. Every labelled pixel in the split has the same chance of
+    selection, so the sample spans every frame and every drive in proportion.
+
+    The whole loader is always consumed. An earlier version kept every pixel until the
+    budget ran out and then stopped, so "subsampled" meant "the first few dozen frames in
+    filename order" -- 56 of 204 validation frames, from 15 of 61 drives.
+
+    The seed fixes which pixel positions are drawn. Two calls over the same split with
+    the same seed therefore score the same pixels, which keeps clean-vs-corrupted
+    comparisons paired.
     """
     generator = torch.Generator().manual_seed(seed)
+    try:
+        n_images = len(loader.dataset)
+    except (AttributeError, TypeError):
+        n_images = None
+    keep_fraction: float | None = None
     logit_chunks: list[torch.Tensor] = []
     target_chunks: list[torch.Tensor] = []
-    collected = 0
 
     for images, targets in loader:
+        if keep_fraction is None:
+            # Sized from the total pixel count, so the expected sample is at most the
+            # budget; the trim below only absorbs sampling noise.
+            total = (n_images or len(images)) * targets[0].numel()
+            keep_fraction = min(1.0, max_pixels / max(1, total)) if n_images else 1.0
+
         logits = model(images.to(device)).cpu()
         n_classes = logits.shape[1]
         flat_logits = logits.permute(0, 2, 3, 1).reshape(-1, n_classes)
         flat_targets = targets.reshape(-1)
 
-        valid = flat_targets != IGNORE_INDEX
-        flat_logits, flat_targets = flat_logits[valid], flat_targets[valid]
-        if flat_targets.numel() == 0:
-            continue
+        keep = flat_targets != IGNORE_INDEX
+        if keep_fraction < 1.0:
+            keep &= torch.rand(flat_targets.numel(), generator=generator) < keep_fraction
+        if keep.any():
+            logit_chunks.append(flat_logits[keep])
+            target_chunks.append(flat_targets[keep])
 
-        budget = max_pixels - collected
-        if flat_targets.numel() > budget:
-            pick = torch.randperm(flat_targets.numel(), generator=generator)[:budget]
-            flat_logits, flat_targets = flat_logits[pick], flat_targets[pick]
-
-        logit_chunks.append(flat_logits)
-        target_chunks.append(flat_targets)
-        collected += flat_targets.numel()
-        if collected >= max_pixels:
-            break
-
-    return torch.cat(logit_chunks), torch.cat(target_chunks)
+    logits, targets = torch.cat(logit_chunks), torch.cat(target_chunks)
+    if targets.numel() > max_pixels:
+        pick = torch.randperm(targets.numel(), generator=generator)[:max_pixels]
+        logits, targets = logits[pick], targets[pick]
+    return logits, targets
 
 
 def calibration_report(
