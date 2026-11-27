@@ -265,9 +265,11 @@ function render(result, originalUrl) {
     "score = coverage x confidence x (1 - obstruction), over the forward corridor. "
     + "Describes the segmentation, not the safety of the road."
     + (d.road_edge_caveat
-        ? `<div class="caveat">Corridor spans a drivable / non-drivable border. This model
-           absorbs 17-20% of true non-drivable into drivable, so the score is optimistic
-           here — see RESULTS.md &sect;9.</div>`
+        ? `<div class="caveat">The corridor reaches a road edge the model has drawn. This
+           model absorbs ~20% of true non-drivable (shoulder, sidewalk) into drivable at
+           road edges, so part of the "drivable" share may not be road. The flag errs
+           toward firing: it caught every validation frame with this error, and fires on
+           many frames without it.</div>`
         : "");
 
   const rows = [...result.classes]

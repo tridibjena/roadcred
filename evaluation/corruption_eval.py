@@ -128,6 +128,47 @@ def fgsm_attack(
     return confusion.miou()
 
 
+def run_fgsm(
+    checkpoint: str | Path,
+    data_root: str | Path,
+    device: str = "auto",
+    batch_size: int = 8,
+    epsilons: Iterable[float] = (1 / 255, 2 / 255, 4 / 255),
+    out_csv: str | Path = "results/fgsm.csv",
+    clean: float | None = None,
+) -> list[dict[str, Any]]:
+    """mIoU under FGSM at several budgets, written to a CSV like every other result.
+
+    Args:
+        clean: Clean mIoU, if already measured; otherwise measured here.
+    """
+    from evaluation.eval import load_checkpoint
+    from modeling.config import resolve_device
+
+    device_t = resolve_device(device)
+    model, payload = load_checkpoint(checkpoint, device_t)
+    n_classes = payload["n_classes"]
+    loader = build_corrupted_loader(
+        data_root, tuple(payload.get("imgsz", (224, 320))), None, 1, batch_size
+    )
+    if clean is None:
+        clean = measure(model, loader, device_t, n_classes)
+
+    rows: list[dict[str, Any]] = []
+    for epsilon in epsilons:
+        miou = fgsm_attack(model, loader, device_t, n_classes, epsilon)
+        rows.append({
+            "epsilon_255": round(epsilon * 255, 3),
+            "miou": miou,
+            "clean_miou": clean,
+            "retention": miou / clean if clean else 0.0,
+        })
+        print(f"FGSM eps={epsilon * 255:.0f}/255  mIoU={miou:.4f}  "
+              f"({100 * miou / clean:.1f}% of clean)", flush=True)
+    _write(rows, out_csv)
+    return rows
+
+
 def run(
     checkpoint: str | Path,
     data_root: str | Path,
@@ -251,31 +292,28 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--no-adapt", action="store_true", help="Skip BN adaptation")
     parser.add_argument("--fgsm", action="store_true", help="Also run an FGSM attack")
+    parser.add_argument(
+        "--fgsm-only", action="store_true", help="Run only the FGSM attack, skipping corruptions"
+    )
     parser.add_argument("--out", default="results/corruption_robustness.csv")
+    parser.add_argument("--fgsm-out", default="results/fgsm.csv")
     parser.add_argument("--figure", default="results/figures/corruption_degradation.png")
     args = parser.parse_args()
 
-    rows = run(
-        args.checkpoint, args.data, args.corruptions, args.severities,
-        args.device, args.batch_size, not args.no_adapt, args.out,
-    )
-    figure = plot_degradation(args.out, args.figure)
-    print(f"\ndegradation curves -> {figure}")
-
-    if args.fgsm:
-        from evaluation.eval import load_checkpoint
-        from modeling.config import resolve_device
-
-        device = resolve_device(args.device)
-        model, payload = load_checkpoint(args.checkpoint, device)
-        loader = build_corrupted_loader(
-            args.data, tuple(payload.get("imgsz", (224, 320))), None, 1, args.batch_size
+    clean = None
+    if not args.fgsm_only:
+        rows = run(
+            args.checkpoint, args.data, args.corruptions, args.severities,
+            args.device, args.batch_size, not args.no_adapt, args.out,
         )
+        figure = plot_degradation(args.out, args.figure)
+        print(f"\ndegradation curves -> {figure}")
         clean = rows[0]["miou"]
-        for epsilon in (1 / 255, 2 / 255, 4 / 255):
-            miou = fgsm_attack(model, loader, device, payload["n_classes"], epsilon)
-            print(f"FGSM eps={epsilon * 255:.0f}/255  mIoU={miou:.4f}  "
-                  f"({100 * miou / clean:.1f}% of clean)")
+
+    if args.fgsm or args.fgsm_only:
+        run_fgsm(args.checkpoint, args.data, args.device, args.batch_size,
+                 out_csv=args.fgsm_out, clean=clean)
+        print(f"-> {args.fgsm_out}")
 
 
 if __name__ == "__main__":

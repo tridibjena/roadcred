@@ -252,6 +252,46 @@ def max_id_for_level(level: str, table: Iterable[IDDLabel] | None = None) -> int
     )
 
 
+def check_mask_range(mask: np.ndarray, level: str) -> None:
+    """Raise if ``mask`` holds an ID its assumed ``level`` cannot contain.
+
+    This catches a fine encoding read as a coarser one, e.g. level-3 masks (IDs up to 25)
+    read as level-1 (IDs up to 6). The opposite mistake, level-1 masks read as level-3,
+    cannot be caught one mask at a time, because 0-6 is also a valid level-3 range;
+    :func:`check_level_plausible` covers that case across a whole dataset.
+    """
+    observed = mask[mask != IGNORE_INDEX]
+    if observed.size and int(observed.max()) > max_id_for_level(level):
+        raise ValueError(
+            f"Mask contains ID {int(observed.max())}, which exceeds the maximum "
+            f"{max_id_for_level(level)} for level {level!r}. The level was likely "
+            "mis-detected; pass an explicit level or check detect_level()."
+        )
+
+
+def check_level_plausible(level: str, max_raw_id: int) -> None:
+    """Reject a whole dataset whose IDs never leave the level-1 range under a finer level.
+
+    This is the guard for the bug that shaped this project's label handling: IDD Lite's
+    bare ``_label.png`` files hold *level-1* IDs, and reading them as level-3 silently maps
+    level1Id 1 (sidewalk, rail track, non-drivable fallback) onto *drivable*. No single
+    mask proves it, since 0-6 is a legal level-3 range. But road scenes read at level 3
+    contain cars (9), buildings (22), vegetation (24) and sky (25); a dataset in which no
+    mask ever exceeds 6 is not level-3 data.
+
+    Args:
+        level: The encoding the dataset is being read as.
+        max_raw_id: Largest non-ignore raw ID observed across every mask read that way.
+    """
+    level1_max = max_id_for_level("level1Ids")
+    if level != "level1Ids" and max_raw_id <= level1_max:
+        raise ValueError(
+            f"Every mask read as {level!r} uses only IDs 0-{max_raw_id}, the level-1 range. "
+            f"They look like level-1 masks (as IDD Lite ships them); reading them as "
+            f"{level!r} would map non-drivable onto drivable. Check detect_level()."
+        )
+
+
 def detect_level(mask_path: str | Path) -> str:
     """Infer the ID encoding of a rendered IDD mask from its path.
 
@@ -286,7 +326,9 @@ def remap_mask(
 
     Args:
         mask: 2-D array of raw IDD IDs.
-        level: ID encoding of ``mask``; ignored when ``lut`` is supplied.
+        level: ID encoding of ``mask``. Range-checked whenever given, including alongside
+            a precomputed ``lut`` -- the dataset build always passes one, so a check that
+            only ran without it would never run on real data.
         target: ``level1`` (7 classes) or ``binary``; ignored when ``lut`` is supplied.
         lut: Precomputed lookup table from :func:`build_lut`, to avoid rebuilding it
             per image inside a dataset-wide loop.
@@ -297,14 +339,9 @@ def remap_mask(
     mask = np.asarray(mask, dtype=np.uint8)
     if lut is None:
         level = level or "level3Ids"
-        observed = mask[mask != IGNORE_INDEX]
-        if observed.size and int(observed.max()) > max_id_for_level(level):
-            raise ValueError(
-                f"Mask contains ID {int(observed.max())}, which exceeds the maximum "
-                f"{max_id_for_level(level)} for level {level!r}. The level was likely "
-                "mis-detected; pass an explicit level or check detect_level()."
-            )
         lut = build_lut(level, target)
+    if level is not None:
+        check_mask_range(mask, level)
     return lut[mask]
 
 
@@ -357,6 +394,8 @@ __all__ = [
     "drivable_names",
     "build_lut",
     "max_id_for_level",
+    "check_mask_range",
+    "check_level_plausible",
     "detect_level",
     "remap_mask",
     "polygons_to_mask",

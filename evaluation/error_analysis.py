@@ -72,7 +72,7 @@ def class_geometry(
     Motivates a distinction the per-class IoU table cannot make on its own. The obvious
     reading of that table is that IoU tracks class *rarity*; but rarity is confounded with
     *thinness* in this dataset, and the two make different predictions. ``barrier-structures``
-    is 8.5x more common than ``living-thing`` and scores the same IoU, which a pure frequency
+    is 8.6x more common than ``living-thing`` and scores the same IoU, which a pure frequency
     story cannot explain and a geometry story predicts.
 
     Needs no model and no GPU -- it reads the label PNGs only -- so it is cheap enough to

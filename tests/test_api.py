@@ -201,3 +201,42 @@ def test_drivability_flags_the_road_edge_caveat():
     result = drivability(prediction, np.full((64, 96), 0.9))
     assert result["road_edge_caveat"] is True
     assert 0.0 < result["coverage"] < 1.0
+
+
+def test_caveat_survives_total_absorption():
+    """Regression: the caveat once required *predicted* non-drivable in the corridor, so it
+    went silent when the model absorbed the whole shoulder into drivable. It now keys on
+    the road edge the model draws, which total absorption cannot remove."""
+    import numpy as np
+
+    from serving.drivability import (
+        BARRIER_STRUCTURES,
+        DRIVABLE,
+        NON_DRIVABLE,
+        corridor_mask,
+        drivability,
+    )
+
+    height, width = 64, 96
+    corridor = corridor_mask(height, width)
+    columns = np.where(corridor.any(axis=0))[0]
+    prediction = np.full((height, width), DRIVABLE, dtype=np.uint8)
+    # A kerb drawn one pixel outside the corridor's left edge, with no non-drivable anywhere:
+    # what the model outputs when a shoulder inside the corridor is absorbed into the road.
+    prediction[:, : columns.min() - 1] = BARRIER_STRUCTURES
+    assert not (prediction == NON_DRIVABLE).any()
+    result = drivability(prediction, np.ones((height, width)))
+    assert result["road_edge_caveat"] is True
+
+
+def test_caveat_stays_down_without_a_road_edge():
+    """Vehicles stand on the road; their outline is an obstruction, not a road edge."""
+    import numpy as np
+
+    from serving.drivability import DRIVABLE, VEHICLES, corridor_mask, drivability
+
+    prediction = np.full((64, 96), DRIVABLE, dtype=np.uint8)
+    prediction[corridor_mask(64, 96) & (np.arange(96)[None, :] < 48)] = VEHICLES
+    result = drivability(prediction, np.ones((64, 96)))
+    assert result["road_edge_caveat"] is False
+    assert result["obstruction"] > 0

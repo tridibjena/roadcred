@@ -79,3 +79,30 @@ def test_remap_preserves_ignore(synthetic_mask):
     out = remap_mask(synthetic_mask, level="level1Ids", target="level1")
     assert (out[:2, :] == 255).all()
     assert out.shape == synthetic_mask.shape
+
+
+def test_range_check_also_runs_with_a_precomputed_lut():
+    """Regression: the dataset build passes a cached lookup table, and the range check
+    used to run only without one -- so it never ran on real data."""
+    level3_mask = np.array([[0, 20], [24, 25]], dtype=np.uint8)
+    with pytest.raises(ValueError, match="exceeds the maximum"):
+        remap_mask(level3_mask, level="level1Ids", lut=build_lut("level1Ids"))
+
+
+def test_level1_masks_read_as_level3_are_rejected_dataset_wide():
+    """The IDD Lite bug: level-1 IDs read as level-3 map non-drivable onto drivable. One
+    mask cannot reveal it (0-6 is a legal level-3 range); the whole dataset can."""
+    from data.label_utils import check_level_plausible
+
+    with pytest.raises(ValueError, match="look like level-1"):
+        check_level_plausible("level3Ids", 6)
+    check_level_plausible("level3Ids", 25)  # real level-3 data reaches sky (25)
+    check_level_plausible("level1Ids", 6)  # level-1 data read as level-1 is fine
+
+
+def test_real_idd_lite_labels_pass_the_level_audit(idd_available):
+    if not idd_available:
+        pytest.skip("IDD not downloaded")
+    from data.idd_frames import audit_label_levels, discover_frames
+
+    assert audit_label_levels(discover_frames("data/raw/idd_seg")) == {"level1Ids": 6}

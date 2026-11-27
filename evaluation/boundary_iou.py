@@ -35,11 +35,13 @@ def boundary_region(mask: np.ndarray, dilation: int = 2) -> np.ndarray:
     if not mask.any():
         return np.zeros_like(mask, dtype=bool)
     binary = mask.astype(np.uint8)
-    # Pad so that regions touching the image border are not treated as having a boundary
-    # there -- the image edge is not an object edge.
-    padded = cv2.copyMakeBorder(binary, 1, 1, 1, 1, cv2.BORDER_CONSTANT, value=0)
+    # The image edge is not an object edge, so pixels outside the frame must count as part
+    # of the region. cv2.erode's default border already does exactly that (it treats
+    # out-of-image pixels as the maximum value). Padding with zeros instead -- as an earlier
+    # version did -- counts a 2px frame around every border-touching class as "boundary",
+    # which inflates boundary IoU for road and sky, whose frame edges match trivially.
     kernel = np.ones((3, 3), dtype=np.uint8)
-    eroded = cv2.erode(padded, kernel, iterations=dilation)[1:-1, 1:-1]
+    eroded = cv2.erode(binary, kernel, iterations=dilation)
     return (binary - eroded).astype(bool)
 
 

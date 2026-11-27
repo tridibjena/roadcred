@@ -22,9 +22,12 @@ from pathlib import Path
 
 import numpy as np
 
-from data.idd_frames import discover_frames, read_mask
-from data.sequence_split import SplitMap, leakage_report, make_splits
+from data.idd_frames import FramePaths, audit_label_levels, discover_frames, read_mask
+from data.sequence_split import SplitMap, frame_gap_stats, leakage_report, make_splits
 from modeling.config import REPO_ROOT
+
+#: Every split strategy, in the order ``--split-mode all`` builds them.
+SPLIT_MODES = ("official", "sequence", "sequence3", "frame")
 
 
 def build_dataset(
@@ -134,8 +137,31 @@ def class_pixel_counts(
     return counts
 
 
+def dataset_stats(
+    frames: Sequence[FramePaths], val_fraction: float, seed: int
+) -> dict[str, object]:
+    """The dataset facts RESULTS.md quotes, measured rather than transcribed.
+
+    Leakage is reported for every split strategy, built exactly as the variants are, so
+    the contamination rate quoted for the random split is the one the trained models saw.
+    """
+    return {
+        "n_frames": len(frames),
+        "n_drives": len({f.drive for f in frames}),
+        "val_fraction": val_fraction,
+        "seed": seed,
+        "splits": {
+            mode: leakage_report(make_splits(frames, mode, val_fraction, seed))
+            for mode in SPLIT_MODES
+        },
+        "frame_gaps": frame_gap_stats(frames),
+    }
+
+
 def main() -> None:
     """CLI: ``python -m data.prepare_masks --split-mode official --target level1``."""
+    import json
+
     from modeling.config import load_config
 
     parser = argparse.ArgumentParser(description=__doc__)
@@ -144,12 +170,19 @@ def main() -> None:
     parser.add_argument(
         "--split-mode",
         default="official",
-        choices=["official", "sequence", "sequence3", "frame", "all"],
+        choices=[*SPLIT_MODES, "all"],
         help="'frame' is the deliberately leaky control; 'all' builds every variant",
     )
     parser.add_argument("--val-fraction", type=float, default=None)
     parser.add_argument("--max-size", type=int, default=None)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--stats-out", default="results/dataset_stats.json",
+        help="Where the measured dataset facts (leakage, frame gaps) are written",
+    )
+    parser.add_argument(
+        "--stats-only", action="store_true", help="Write the dataset facts and build nothing"
+    )
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -169,8 +202,19 @@ def main() -> None:
         f"Discovered {len(frames)} labelled frames across "
         f"{len({f.drive for f in frames})} drive sequences"
     )
+    # Before anything is written: a mis-detected label level corrupts every variant.
+    print(f"Label levels: {audit_label_levels(frames)} (largest raw ID per detected level)")
 
-    modes = ["official", "sequence", "frame"] if args.split_mode == "all" else [args.split_mode]
+    stats_path = REPO_ROOT / args.stats_out
+    stats_path.parent.mkdir(parents=True, exist_ok=True)
+    stats_path.write_text(
+        json.dumps(dataset_stats(frames, val_fraction, args.seed), indent=2) + "\n"
+    )
+    print(f"Dataset facts -> {stats_path.relative_to(REPO_ROOT)}")
+    if args.stats_only:
+        return
+
+    modes = list(SPLIT_MODES) if args.split_mode == "all" else [args.split_mode]
     for mode in modes:
         splits = make_splits(frames, mode, val_fraction, args.seed)
         report = leakage_report(splits)

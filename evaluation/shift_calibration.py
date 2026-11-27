@@ -24,8 +24,8 @@ Three measurements, in the order they matter:
 3. **Selective prediction.** If confidence means something, thresholding on it should buy
    accuracy. The risk-coverage curve answers what a perception stack asks: *at the
    threshold where this model is 95% accurate, how much of the frame can it commit to?*
-   That also replaces the hardcoded 0.6 in the serving layer with a measured operating
-   point.
+   The threshold it reports is a measured operating point; the serving layer still uses
+   a fixed 0.6 for its low-confidence share, and does not read this.
 
 Run::
 

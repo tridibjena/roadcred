@@ -7,15 +7,16 @@ segmentation-models-pytorch>=0.4.0  # DeepLabV3+ / U-Net / FPN decoders
 timm>=1.0.0                       # encoder zoo backing smp
 
 # --- data / augmentation ---
-albumentations>=1.4.0
+albumentations>=2.0.0            # Affine(fill_mask=...) and Resize(mask_interpolation=...) are 2.x API
 opencv-python-headless>=4.10.0
 pillow>=10.0.0
-numpy>=1.26,<3
+numpy>=2.0,<3                     # np.trapezoid (shift_calibration) is NumPy 2 API
 pandas>=2.0.0
 pyyaml>=6.0
 
 # --- experiments / analysis ---
 matplotlib>=3.8.0                 # every figure under results/figures/
+scipy>=1.11.0                     # significance tests in RESULTS.md
 
 # --- compression / export ---
 onnx>=1.16.0

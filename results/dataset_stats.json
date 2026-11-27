@@ -1,0 +1,59 @@
+{
+  "n_frames": 1607,
+  "n_drives": 370,
+  "val_fraction": 0.15,
+  "seed": 0,
+  "splits": {
+    "official": {
+      "shared_drives": 0,
+      "shared_drive_ids": [],
+      "contaminated_val_frames": 0,
+      "contaminated_fraction": 0.0,
+      "n_train": 1403,
+      "n_val": 204
+    },
+    "sequence": {
+      "shared_drives": 0,
+      "shared_drive_ids": [],
+      "contaminated_val_frames": 0,
+      "contaminated_fraction": 0.0,
+      "n_train": 1365,
+      "n_val": 242
+    },
+    "sequence3": {
+      "shared_drives": 0,
+      "shared_drive_ids": [],
+      "contaminated_val_frames": 0,
+      "contaminated_fraction": 0.0,
+      "n_train": 1124,
+      "n_val": 241,
+      "n_test": 242,
+      "contaminated_test_frames": 0,
+      "contaminated_test_fraction": 0.0
+    },
+    "frame": {
+      "shared_drives": 139,
+      "shared_drive_ids": [
+        "1",
+        "100",
+        "102",
+        "104",
+        "106",
+        "110",
+        "116",
+        "121",
+        "126",
+        "127"
+      ],
+      "contaminated_val_frames": 228,
+      "contaminated_fraction": 0.946058091286307,
+      "n_train": 1366,
+      "n_val": 241
+    }
+  },
+  "frame_gaps": {
+    "n_gaps": 1237,
+    "median_gap": 4227,
+    "share_within_30": 0.004042037186742118
+  }
+}

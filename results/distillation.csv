@@ -1,4 +1,4 @@
-variant,encoder,miou,params,gain_over_alone,gap_to_teacher
-teacher,checkpoints/arch_unet_resnet34_s0.pt,0.6975976262441809,24437239,,
-student_alone,resnet18,0.6750700900812935,12330839,,
-student_distilled,resnet18,0.6779175056385761,12330839,0.0028474155572826287,-0.019680120605604756
+variant,architecture,encoder,checkpoint,batch_size,miou,params,gain_over_alone,gap_to_teacher
+teacher,deeplabv3plus,resnet34,checkpoints/stride8_s0.pt,,0.6979100114355135,22438999,,
+student_alone,deeplabv3plus,resnet18,checkpoints/student_alone_resnet18_s0.pt,8,0.6799522180563835,12330839,,
+student_distilled,deeplabv3plus,resnet18,checkpoints/student_distilled_resnet18_s0.pt,8,0.6809747022976783,12330839,0.0010224842412948076,-0.01693530913783514

@@ -34,8 +34,11 @@ class Drivability(BaseModel):
     corridor_pixels: int
     road_edge_caveat: bool = Field(
         ...,
-        description="Corridor spans a drivable/non-drivable border; the model absorbs "
-        "17-20% of true non-drivable into drivable, so the score is optimistic here",
+        description="The model draws a road edge (drivable beside non-drivable, barrier, "
+        "vegetation or sky) in or within 1% of image width of the corridor. It absorbs ~20% "
+        "of true non-drivable into drivable at such edges, so the score may count shoulder "
+        "as road. Fires on every validation frame with in-corridor absorption, and on many "
+        "without it (results/road_edge_caveat.json)",
     )
 
 

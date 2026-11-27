@@ -102,3 +102,57 @@ def test_resolve_device_and_set_seed():
     first = torch.randn(4)
     set_seed(0)
     assert torch.equal(first, torch.randn(4)), "set_seed did not make sampling reproducible"
+
+
+# --- the training command line -------------------------------------------------------
+
+
+def _cli(*argv: str) -> dict:
+    from modeling.train import parse_args, resolve_settings
+
+    return resolve_settings(parse_args(list(argv)))
+
+
+def test_cli_without_flags_uses_train_config_defaults():
+    """Regression: an omitted --encoder-weights once resolved to None, so the README's own
+    quickstart trained from random initialisation while the logs said ImageNet."""
+    from dataclasses import asdict
+
+    settings = _cli("--data", "data/processed/level1_official")
+    assert settings["encoder_weights"] == "imagenet"
+    assert settings == asdict(TrainConfig())
+
+
+def test_cli_flags_override_only_what_they_name():
+    settings = _cli("--arch", "unet", "--epochs", "30", "--batch-size", "4", "--imgsz", "256x384")
+    assert settings["architecture"] == "unet"
+    assert settings["epochs"] == 30 and settings["batch_size"] == 4
+    assert settings["imgsz"] == (256, 384)
+    assert settings["encoder_weights"] == "imagenet"
+    assert settings["patience"] == TrainConfig().patience
+
+
+def test_cli_can_still_disable_pretraining_explicitly():
+    assert _cli("--encoder-weights", "none")["encoder_weights"] is None
+
+
+def test_cli_flags_win_over_the_config_file(tmp_path):
+    path = tmp_path / "cfg.yaml"
+    path.write_text("train:\n  loss: dice\n  epochs: 30\n  encoder_weights: null\n")
+    settings = _cli("--config", str(path), "--epochs", "12")
+    assert settings["loss"] == "dice"
+    assert settings["encoder_weights"] is None  # the file's value, untouched by the CLI
+    assert settings["epochs"] == 12  # the flag wins
+
+
+def test_train_defaults_are_train_config_defaults():
+    """train(), the CLI and YAML configs must share one set of defaults; a silent mismatch
+    between them is how a comparison ends up confounded."""
+    import inspect
+    from dataclasses import asdict
+
+    from modeling.train import train
+
+    parameters = inspect.signature(train).parameters
+    for name, value in asdict(TrainConfig()).items():
+        assert parameters[name].default == value, f"train() default for {name!r} drifted"

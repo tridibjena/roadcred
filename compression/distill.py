@@ -30,11 +30,14 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from modeling.architectures import build_model, count_parameters
-from modeling.config import resolve_device, set_seed
+from modeling.config import TrainConfig, resolve_device, set_seed
 from modeling.dataset import build_loaders
 from modeling.losses import IGNORE_INDEX
 from modeling.tracking import TensorBoard, log_run
 from modeling.train import cosine_schedule, evaluate
+
+#: The recipe of every run reported in RESULTS.md, which both comparison arms share.
+RECIPE_EPOCHS, RECIPE_BATCH_SIZE, RECIPE_PATIENCE = 30, 8, 8
 
 
 class DistillationLoss(nn.Module):
@@ -85,14 +88,16 @@ def distill(
     encoder_weights: str | None = "imagenet",
     alpha: float = 0.5,
     temperature: float = 4.0,
-    epochs: int = 30,
-    batch_size: int = 8,
-    imgsz: tuple[int, int] = (224, 320),
-    lr: float = 3e-4,
-    weight_decay: float = 1e-4,
+    epochs: int = RECIPE_EPOCHS,
+    batch_size: int = RECIPE_BATCH_SIZE,
+    imgsz: tuple[int, int] = TrainConfig.imgsz,
+    lr: float = TrainConfig.lr,
+    weight_decay: float = TrainConfig.weight_decay,
     seed: int = 0,
     device: str = "auto",
-    patience: int = 8,
+    patience: int = RECIPE_PATIENCE,
+    warmup_frac: float = TrainConfig.warmup_frac,
+    grad_clip: float = TrainConfig.grad_clip,
     out_dir: str | Path = "checkpoints",
     run_name: str | None = None,
     results_csv: str | Path = "results/runs.csv",
@@ -119,7 +124,7 @@ def distill(
     criterion = DistillationLoss(alpha, temperature).to(device_t)
     optimizer = torch.optim.AdamW(student.parameters(), lr=lr, weight_decay=weight_decay)
     total_steps = max(1, epochs * len(train_loader))
-    scheduler = cosine_schedule(optimizer, total_steps, int(0.05 * total_steps))
+    scheduler = cosine_schedule(optimizer, total_steps, int(warmup_frac * total_steps))
 
     board = TensorBoard(Path("runs") / run_name)
     out_dir = Path(out_dir)
@@ -142,7 +147,8 @@ def distill(
             optimizer.zero_grad(set_to_none=True)
             loss = criterion(student(images), teacher_logits, targets)
             loss.backward()
-            nn.utils.clip_grad_norm_(student.parameters(), 1.0)
+            if grad_clip > 0:
+                nn.utils.clip_grad_norm_(student.parameters(), grad_clip)
             optimizer.step()
             scheduler.step()
             running += loss.detach().item()
@@ -181,17 +187,26 @@ def distill(
             break
 
     board.close()
+    # Logged with the same columns modeling.train writes, so a distilled run and its
+    # standalone control can be checked against each other directly in runs.csv.
     result = {
         **best,
         "run_name": run_name,
         "data": data_root.name,
         "architecture": architecture,
         "encoder": encoder,
+        "encoder_weights": str(encoder_weights),
+        "encoder_output_stride": 16,
         "loss": f"distill(a={alpha},T={temperature})",
         "teacher": str(teacher_checkpoint),
         "teacher_params": count_parameters(teacher),
         "seed": seed,
         "epochs_ran": best_epoch + 1,
+        "epochs_max": epochs,
+        "batch_size": batch_size,
+        "lr": lr,
+        "weight_decay": weight_decay,
+        "imgsz": f"{imgsz[0]}x{imgsz[1]}",
         "params": count_parameters(student),
         "device": str(device_t),
         "train_seconds": round(time.time() - started, 1),
@@ -201,13 +216,47 @@ def distill(
     return result
 
 
+def comparison_recipe(
+    student_encoder: str = "resnet18",
+    epochs: int = RECIPE_EPOCHS,
+    batch_size: int = RECIPE_BATCH_SIZE,
+    patience: int = RECIPE_PATIENCE,
+    seed: int = 0,
+) -> dict[str, Any]:
+    """The settings both comparison arms receive, spelled out in full.
+
+    Passed explicitly to both :func:`modeling.train.train` and :func:`distill` rather than
+    left to each function's defaults. The two are separate entry points, and a default
+    that differs between them becomes an uncontrolled variable: an earlier version let the
+    standalone student fall back to batch size 16 while the distilled one trained at 8,
+    which confounded the very comparison this module exists to make.
+    """
+    defaults = TrainConfig()
+    return {
+        "architecture": "deeplabv3plus",
+        "encoder": student_encoder,
+        "encoder_weights": defaults.encoder_weights,
+        "epochs": epochs,
+        "batch_size": batch_size,
+        "imgsz": defaults.imgsz,
+        "lr": defaults.lr,
+        "weight_decay": defaults.weight_decay,
+        "warmup_frac": defaults.warmup_frac,
+        "grad_clip": defaults.grad_clip,
+        "patience": patience,
+        "seed": seed,
+    }
+
+
 def run_comparison(
     data_root: str | Path,
     teacher_checkpoint: str | Path,
     student_encoder: str = "resnet18",
-    epochs: int = 30,
+    epochs: int = RECIPE_EPOCHS,
     seed: int = 0,
     out_csv: str | Path = "results/distillation.csv",
+    batch_size: int = RECIPE_BATCH_SIZE,
+    patience: int = RECIPE_PATIENCE,
 ) -> list[dict[str, Any]]:
     """Teacher vs standalone student vs distilled student, all else held fixed."""
     import csv
@@ -215,39 +264,44 @@ def run_comparison(
     from evaluation.eval import evaluate_checkpoint
     from modeling.train import train
 
+    recipe = comparison_recipe(student_encoder, epochs, batch_size, patience, seed)
     rows: list[dict[str, Any]] = []
 
     teacher_metrics = evaluate_checkpoint(teacher_checkpoint, data_root)
     rows.append({
         "variant": "teacher",
-        "encoder": teacher_metrics.get("checkpoint", ""),
+        "architecture": teacher_metrics.get("architecture"),
+        "encoder": teacher_metrics.get("encoder"),
+        "checkpoint": str(teacher_checkpoint),
         "miou": teacher_metrics["miou"],
         "params": teacher_metrics["params"],
     })
     print(f"teacher: mIoU={teacher_metrics['miou']:.4f}", flush=True)
 
     print("\n--- student trained alone ---", flush=True)
-    baseline = train(
-        data_root, encoder=student_encoder, epochs=epochs, seed=seed,
-        run_name=f"student_alone_{student_encoder}_s{seed}", patience=8,
-    )
-    rows.append({"variant": "student_alone", "encoder": student_encoder,
-                 "miou": baseline["miou"], "params": baseline["params"]})
+    baseline = train(data_root, run_name=f"student_alone_{student_encoder}_s{seed}", **recipe)
+    rows.append({"variant": "student_alone", "architecture": recipe["architecture"],
+                 "encoder": student_encoder, "checkpoint": baseline.get("checkpoint"),
+                 "batch_size": batch_size, "miou": baseline["miou"],
+                 "params": baseline["params"]})
 
     print("\n--- student distilled from teacher ---", flush=True)
     distilled = distill(
-        data_root, teacher_checkpoint, encoder=student_encoder, epochs=epochs, seed=seed,
-        run_name=f"student_distilled_{student_encoder}_s{seed}",
+        data_root, teacher_checkpoint,
+        run_name=f"student_distilled_{student_encoder}_s{seed}", **recipe,
     )
-    rows.append({"variant": "student_distilled", "encoder": student_encoder,
-                 "miou": distilled["miou"], "params": distilled["params"]})
+    rows.append({"variant": "student_distilled", "architecture": recipe["architecture"],
+                 "encoder": student_encoder, "checkpoint": distilled.get("checkpoint"),
+                 "batch_size": batch_size, "miou": distilled["miou"],
+                 "params": distilled["params"]})
 
     rows[-1]["gain_over_alone"] = distilled["miou"] - baseline["miou"]
     rows[-1]["gap_to_teacher"] = distilled["miou"] - teacher_metrics["miou"]
 
     path = Path(out_csv)
     path.parent.mkdir(parents=True, exist_ok=True)
-    fields = ["variant", "encoder", "miou", "params", "gain_over_alone", "gap_to_teacher"]
+    fields = ["variant", "architecture", "encoder", "checkpoint", "batch_size", "miou",
+              "params", "gain_over_alone", "gap_to_teacher"]
     with path.open("w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="ignore")
         writer.writeheader()
@@ -261,13 +315,16 @@ def main() -> None:
     parser.add_argument("--teacher", required=True, help="Trained teacher checkpoint")
     parser.add_argument("--data", default="data/processed/level1_official")
     parser.add_argument("--student-encoder", default="resnet18")
-    parser.add_argument("--epochs", type=int, default=30)
+    parser.add_argument("--epochs", type=int, default=RECIPE_EPOCHS)
+    parser.add_argument("--batch-size", type=int, default=RECIPE_BATCH_SIZE)
+    parser.add_argument("--patience", type=int, default=RECIPE_PATIENCE)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--out", default="results/distillation.csv")
     args = parser.parse_args()
 
     rows = run_comparison(
-        args.data, args.teacher, args.student_encoder, args.epochs, args.seed, args.out
+        args.data, args.teacher, args.student_encoder, args.epochs, args.seed, args.out,
+        batch_size=args.batch_size, patience=args.patience,
     )
     print(json.dumps(rows, indent=2, default=float))
 
